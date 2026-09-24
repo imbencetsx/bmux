@@ -1,0 +1,41 @@
+# SwiftPM build output
+.build/
+
+# SwiftPM workspace state (caches, not the resolved versions)
+# NOTE: Package.resolved is intentionally tracked for reproducible builds.
+.swiftpm/
+
+# Xcode
+*.xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.xccheckout
+*.moved-aside
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Built app bundle (build artifact, rebuilt via swift build)
+Bmux.app/
+*.app/
+
+# Editor / tooling
+.vscode/
+.idea/
+*.swp
+*~
+
+# Environment / secrets
+.env
+.env.local

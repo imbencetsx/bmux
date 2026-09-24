@@ -1,0 +1,233 @@
+{
+  "color-space-for-untagged-svg-colors" : "display-p3",
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.07666,0.28123,0.40011,1.00000",
+      "display-p3:0.04415,0.03201,0.23144,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "darken"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.11644,0.27200,0.48449,1.00000",
+                  "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.00000,0.39509,0.53592,1.00000",
+                  "display-p3:0.02199,0.40969,0.80156,1.00000"
+                ]
+              }
+            }
+          ],
+          "image-name" : "641395588_18074044754396380_9158881445648166983_n(1).jpg",
+          "name" : "641395588_18074044754396380_9158881445648166983_n(1)",
+          "opacity-specializations" : [
+            {
+              "value" : 0.5
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.8
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -3.5,
+              2
+            ]
+          }
+        },
+        {
+          "blend-mode-specializations" : [
+            {
+              "value" : "normal"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "overlay"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.16306,0.19452,0.57165,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.11196,0.67754,0.72746,1.00000"
+              }
+            }
+          ],
+          "image-name" : "641395588_18074044754396380_9158881445648166983_n(1).jpg",
+          "name" : "641395588_18074044754396380_9158881445648166983_n(1)",
+          "opacity-specializations" : [
+            {
+              "value" : 0.5
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.6
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -182.5,
+              175
+            ]
+          }
+        },
+        {
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "overlay"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.19468,0.45927,0.85692,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.39157,0.85899,1.00000,1.00000"
+              }
+            }
+          ],
+          "image-name" : "641395588_18074044754396380_9158881445648166983_n(1).jpg",
+          "name" : "641395588_18074044754396380_9158881445648166983_n(1)",
+          "opacity-specializations" : [
+            {
+              "value" : 0.5
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.6
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -182.5,
+              -175
+            ]
+          }
+        },
+        {
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "lighten"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.07012,0.09024,0.31871,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.12803,0.31685,0.49451,1.00000"
+              }
+            }
+          ],
+          "image-name" : "641395588_18074044754396380_9158881445648166983_n(1).jpg",
+          "name" : "641395588_18074044754396380_9158881445648166983_n(1)",
+          "opacity-specializations" : [
+            {
+              "value" : 0.5
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.75
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              182.5,
+              175
+            ]
+          }
+        },
+        {
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "lighten"
+            }
+          ],
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "display-p3:0.20034,0.44032,0.75922,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.26103,0.56365,0.76378,1.00000"
+              }
+            }
+          ],
+          "image-name" : "641395588_18074044754396380_9158881445648166983_n(1).jpg",
+          "name" : "641395588_18074044754396380_9158881445648166983_n(1)",
+          "opacity-specializations" : [
+            {
+              "value" : 0.5
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.74
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              182.5,
+              -175
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.3
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
