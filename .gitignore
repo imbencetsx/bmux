@@ -29,6 +29,7 @@ DerivedData/
 # Built app bundle (build artifact, rebuilt via swift build)
 Bmux.app/
 *.app/
+*.dmg
 
 # Editor / tooling
 .vscode/
