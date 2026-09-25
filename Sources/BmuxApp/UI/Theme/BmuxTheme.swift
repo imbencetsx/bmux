@@ -70,9 +70,9 @@ struct BmuxTheme {
         scheme == .dark ? Color.white.opacity(0.1) : Color(red: 0.824, green: 0.824, blue: 0.839)
     }
 
-    /// Hairline split divider: barely-there on the terminal bg.
+    /// Hairline split divider: just seeable on the terminal bg, never stark.
     static func divider(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color.white.opacity(0.09) : Color(nsColor: .separatorColor)
+        scheme == .dark ? Color.white.opacity(0.12) : Color(nsColor: .separatorColor).opacity(0.7)
     }
 
     /// Single functional accent: Srcery bright orange (cursor family).

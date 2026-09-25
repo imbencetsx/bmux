@@ -109,8 +109,8 @@ struct AppSettings: Codable, Hashable, Sendable {
 
     // MARK: Window & layout
 
-    var defaultWidth: Double = 1120
-    var defaultHeight: Double = 700
+    var defaultWidth: Double = 1280
+    var defaultHeight: Double = 800
     var rememberFrame: Bool = false
     /// Grid breathing room. Always emitted (defaults = current look).
     var paddingX: Int = 8
