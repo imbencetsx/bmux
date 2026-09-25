@@ -52,6 +52,19 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: 8)
         }
+        // Trailing edge: soft hairline separating the sidebar from the
+        // terminal detail, matching the split dividers. Applied after the
+        // insets so it runs the full column height — up through the
+        // header/titlebar zone and the top-bar hairline — sitting over
+        // everything at that x.
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(BmuxTheme.divider(scheme))
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+                .ignoresSafeArea(edges: [.top, .bottom])
+                .accessibilityHidden(true)
+        }
         .sheet(item: $renaming) { ws in
             RenameSheet(name: $renameText, title: "Rename workspace") {
                 manager.rename(ws.id, to: renameText)

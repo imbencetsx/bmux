@@ -154,7 +154,7 @@ private struct SplitSlotPairView<First: View, Second: View>: View {
     }
 }
 
-/// Faint hairline at rest (just enough to see split borders) brightening
+/// Soft hairline at rest (seeable, not stark) brightening
 /// on hover, like Ghostty — with a generous invisible hit target. Owns
 /// its hover state so hovering never re-renders the tree.
 private struct SplitDividerView: View {
@@ -169,7 +169,7 @@ private struct SplitDividerView: View {
 
     var body: some View {
         Rectangle()
-            .fill(hovering || liveRatio != nil ? BmuxTheme.muted(scheme).opacity(0.5) : BmuxTheme.divider(scheme).opacity(0.6))
+            .fill(hovering || liveRatio != nil ? BmuxTheme.muted(scheme).opacity(0.5) : BmuxTheme.divider(scheme))
             .frame(width: vertical ? 1 : nil, height: vertical ? nil : 1)
             .overlay {
                 (vertical ? Color.clear.frame(width: 9) : Color.clear.frame(height: 9))
