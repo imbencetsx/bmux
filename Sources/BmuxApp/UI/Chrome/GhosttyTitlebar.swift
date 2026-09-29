@@ -247,15 +247,17 @@ private struct NativeFolderLabel: View {
             HStack(spacing: 5) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: path))
                     .resizable()
-                    .frame(width: 16, height: 16)
+                    .frame(width: 18, height: 18)
                     .accessibilityHidden(true)
                 Text(displayName)
             }
-            .font(.system(size: 12.5))
+            .font(.system(size: 13.5))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
-            .frame(maxWidth: 320)
+            .frame(maxWidth: 340)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 2)
         }
         .buttonStyle(.plain)
         .help(path)

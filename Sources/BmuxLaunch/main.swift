@@ -56,7 +56,8 @@ enum BmuxLaunch {
             exit(1)
         }
 
-        exit(Recorder.run(transcriptPath: ts, argv0: first, argv: argv))
+        let maxTranscriptBytes = UInt64(env["BMUX_TS_MAX_BYTES"] ?? "") ?? 8 * 1024 * 1024
+        exit(Recorder.run(transcriptPath: ts, argv0: first, argv: argv, maxTranscriptBytes: maxTranscriptBytes))
     }
 
     /// Dump restore bytes to stdout, or clear the screen — same contract as
@@ -116,7 +117,7 @@ private enum WinchMailbox {
 
 enum Recorder {
     /// Returns the child's wait-status exit code (0...255).
-    static func run(transcriptPath: String, argv0: String, argv: [String]) -> Int32 {
+    static func run(transcriptPath: String, argv0: String, argv: [String], maxTranscriptBytes: UInt64) -> Int32 {
         // Save + raw the outer tty so every byte Ghostty sends flows through,
         // matching script(1)'s relay behaviour.
         var original = termios()
@@ -168,7 +169,7 @@ enum Recorder {
             }
             let cArgs = argv.map { strdup($0) } + [nil]
             // Intentionally leak cArgs on success (exec replaces the image).
-            argv0.withCString { name in
+            _ = argv0.withCString { name in
                 execvp(name, cArgs)
             }
             let msg = "bmux-launch: exec \(argv0): \(String(cString: strerror(errno)))\n"
@@ -182,13 +183,11 @@ enum Recorder {
         WinchMailbox.childPID = pid
         signal(SIGWINCH, WinchMailbox.handler)
 
-        let transcript = openTranscript(transcriptPath)
         defer {
-            if let transcript { close(transcript) }
             close(master)
         }
 
-        let code = relay(master: master, child: pid, transcript: transcript)
+        let code = relay(master: master, child: pid, transcriptPath: transcriptPath, maxTranscriptBytes: maxTranscriptBytes)
         WinchMailbox.masterFD = -1
         WinchMailbox.childPID = -1
         return code
@@ -202,9 +201,14 @@ enum Recorder {
 
     // MARK: Relay
 
-    private static func relay(master: Int32, child: pid_t, transcript: Int32?) -> Int32 {
+    private static func relay(master: Int32, child: pid_t, transcriptPath: String, maxTranscriptBytes: UInt64) -> Int32 {
         var stdinOpen = true
         var masterOpen = true
+        var transcript = openTranscript(transcriptPath)
+        defer { if let transcript { close(transcript) } }
+        // waitpid reaps a child only once. Keep its status while draining
+        // output still buffered in the PTY after the process exits.
+        var childStatus: Int32?
         var buf = [UInt8](repeating: 0, count: 16 * 1024)
 
         while masterOpen {
@@ -250,21 +254,34 @@ enum Recorder {
                 let n = read(master, &buf, buf.count)
                 if n > 0 {
                     _ = writeAll(STDOUT_FILENO, buf, count: n)
-                    if let transcript {
-                        _ = writeAll(transcript, buf, count: n)
+                    if let current = transcript {
+                        var info = stat()
+                        if fstat(current, &info) == 0,
+                           UInt64(max(0, info.st_size)) + UInt64(n) > max(1, maxTranscriptBytes)
+                        {
+                            close(current)
+                            let archive = transcriptPath + ".1"
+                            _ = rename(transcriptPath, archive)
+                            transcript = openTranscript(transcriptPath)
+                        }
+                        if let transcript {
+                            _ = writeAll(transcript, buf, count: n)
+                        }
                     }
                 } else {
                     masterOpen = false
                 }
             }
 
-            var status: Int32 = 0
-            let waited = waitpid(child, &status, WNOHANG)
-            if waited == child, !masterOpen {
-                return exitStatus(status)
+            if childStatus == nil {
+                var status: Int32 = 0
+                if waitpid(child, &status, WNOHANG) == child {
+                    childStatus = status
+                }
             }
         }
 
+        if let childStatus { return exitStatus(childStatus) }
         var status: Int32 = 0
         while true {
             let waited = waitpid(child, &status, 0)

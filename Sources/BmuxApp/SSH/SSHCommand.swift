@@ -1,10 +1,8 @@
 import Foundation
 
-/// An SSH workspace target. The raw string is spawned verbatim (via the
-/// user's shell through ghostty's `command`, which uses `/bin/sh -c` when
-/// arguments are present) so `~/.ssh/config`, keys, agents and jump hosts
-/// keep working exactly as on the command line. Parsed fields exist only
-/// for display (subtitle, port badge) — never for re-rendering the command.
+/// An SSH workspace target. Ghostty's surface command splits on whitespace,
+/// so launch accepts only arguments that remain single, space-free tokens.
+/// Parsed fields also drive the host badge and port subtitle.
 struct SSHCommand: Hashable, Codable {
     var raw: String
 

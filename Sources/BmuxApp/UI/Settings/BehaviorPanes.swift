@@ -41,7 +41,7 @@ struct TerminalPane: View {
                 Stepper(value: $settings.current.restoreTailKB, in: 16...2048, step: 16) {
                     Text("Respawn re-render: last \(settings.current.restoreTailKB) KB")
                 }
-                SettingNote(text: "Transcripts persist per pane for the History viewer; the cap rotates the file.")
+                SettingNote(text: "Transcripts persist per pane for the History viewer. The cap rotates active files and takes effect on new panes or reconnect.")
             }
         }
         .formStyle(.grouped)

@@ -46,6 +46,8 @@ struct TerminalOps {
     /// A lone terminal recreates as a fresh shell via `closeTab`, so the
     /// window never shows a void.
     func closePane(_ paneID: UUID, in ws: Workspace, tabID: UUID) {
+        guard let tab = manager.detail(for: ws.id)?.tabs.first(where: { $0.id == tabID }),
+              tab.root.pane(paneID) != nil else { return }
         hosts.retire(paneID: paneID) // first: teardown onClose must not resurrect
         var lastPane = false
         manager.mutateDetail(ws.id) { detail in

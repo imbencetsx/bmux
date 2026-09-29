@@ -43,5 +43,10 @@ let package = Package(
             name: "BmuxLaunch",
             path: "Sources/BmuxLaunch"
         ),
+        .testTarget(
+            name: "BmuxCoreTests",
+            dependencies: ["BmuxApp"],
+            path: "Tests/BmuxCoreTests"
+        ),
     ]
 )
