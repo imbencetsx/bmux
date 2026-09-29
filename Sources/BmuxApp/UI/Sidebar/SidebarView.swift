@@ -32,20 +32,19 @@ struct SidebarView: View {
                 .padding(.vertical, 3)
                 .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 8))
                 .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
                 .tag(ws.id)
                 .contextMenu { workspaceMenu(ws) }
             }
             .onMove { manager.move(from: $0, to: $1) }
         }
         .listStyle(.sidebar)
-        // Terminal-matched column: hide the native translucent sidebar
-        // material and paint the terminal background instead, so the
-        // sidebar reads as one surface with the rest of the window and
-        // follows theme switches like everything else.
-        .scrollContentBackground(.hidden)
-        .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
-        // Hidden title bar: rows start below the floating traffic lights
-        // while the sidebar glass runs full height behind them.
+        // Sidebar is one surface with the terminal: opaque theme fill on
+        // all macOS versions (no Liquid Glass passthrough).
+        .modifier(SidebarSurfaceModifier(
+            terminalFill: BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme)
+        ))
+        // A small breathing space beneath the native titlebar.
         .safeAreaInset(edge: .top, spacing: 0) {
             Color.clear.frame(height: 8)
         }
@@ -263,6 +262,20 @@ struct WorkspaceAccent: Identifiable {
         .init(name: "Pink", hex: "#F472B6"),
         .init(name: "Purple", hex: "#A78BFA"),
     ]
+}
+
+// MARK: - Sidebar Glass Surface
+
+/// Sidebar paints the opaque theme fill on all macOS versions so it reads
+/// as one surface with the terminal detail — no Liquid Glass passthrough.
+private struct SidebarSurfaceModifier: ViewModifier {
+    var terminalFill: Color
+
+    func body(content: Content) -> some View {
+        content
+            .scrollContentBackground(.hidden)
+            .background(terminalFill)
+    }
 }
 
 // MARK: - Renaming Workspaces
