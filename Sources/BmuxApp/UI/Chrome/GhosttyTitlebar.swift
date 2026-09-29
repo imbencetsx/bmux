@@ -86,8 +86,9 @@ struct TerminalTopBar: View {
 /// remote titles in real time through the engine state (`@ObservedObject`);
 /// static fallbacks while spawning. Ghostty-quiet 12.5pt secondary text.
 ///
-/// Also syncs `NSWindow.title` + `representedURL` so the window itself
-/// behaves like a macOS document (proxy icon, ⌘-click path, drag).
+/// Also syncs `NSWindow.title` so menus/voiceover follow `cd`; it never
+/// sets `representedURL` (that would flip the window into document chrome
+/// with flat solid traffic lights on macOS 27).
 struct TitlebarStatus: View {
     let workspace: Workspace
     let pane: Pane?
@@ -293,17 +294,18 @@ private struct NativeFolderLabel: View {
     }
 }
 
-// MARK: - Window Proxy
+// MARK: - Window Title
 
-/// Makes the window itself behave like a macOS document window for the
-/// current folder: title, proxy icon, ⌘-click path popover, drag.
+/// Follows the live folder name in `NSWindow.title` for menus/voiceover.
+/// Deliberately NOT setting `representedURL`: a represented URL turns the
+/// window into a document window, and on macOS 27 document windows keep
+/// the flat solid traffic lights instead of the glossy Liquid Glass ones
+/// (BITTyping never sets it). With `.hiddenTitleBar` there is no visible
+/// proxy icon anyway — reveal/copy-path/drag all live on the
+/// `NativeFolderLabel` itself (click, context menu, `.draggable`).
 @MainActor
 private func syncWindowChrome(title: String, path: String?) {
     guard let window = NSApp.keyWindow ?? NSApp.windows.first else { return }
     window.title = title
-    if let path, !path.isEmpty {
-        window.representedURL = URL(fileURLWithPath: path, isDirectory: true)
-    } else {
-        window.representedURL = nil
-    }
+    window.representedURL = nil
 }

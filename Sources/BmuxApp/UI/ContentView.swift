@@ -61,40 +61,36 @@ struct ContentView: View {
         .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 340)
         .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Menu {
-                    Button("New local workspace") {
-                        manager.create(name: "Untitled")
-                    }
-                    Button("New SSH workspace") {
-                        NotificationCenter.default.post(name: .bmuxNewSSH, object: nil)
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Circle())
+            if #available(macOS 26, *) {
+                ToolbarItem(placement: .navigation) {
+                    newWorkspaceMenu
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .tint(BmuxTheme.muted(scheme))
-                .help("New workspace")
-                .accessibilityLabel("New workspace")
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigation) {
+                    newWorkspaceMenu
+                }
             }
             if let ws = manager.active,
                let detail = manager.detail(for: ws.id),
                let tab = detail.activeTab {
-                ToolbarItem(placement: .principal) {
-                    TitlebarStatus(
-                        workspace: ws,
-                        pane: focusedPane(tab: tab),
-                        host: focusedHost(tab: tab),
-                        contrast: BmuxTheme.contrastScheme(settings: settings.applied, system: scheme)
-                    )
+                if #available(macOS 26, *) {
+                    ToolbarItem(placement: .principal) {
+                        titlebarStatus(workspace: ws, tab: tab)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .principal) {
+                        titlebarStatus(workspace: ws, tab: tab)
+                    }
                 }
             }
         }
+        .toolbarBackground(
+            BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme),
+            for: .windowToolbar
+        )
+        .toolbarBackground(.visible, for: .windowToolbar)
         .onAppear { ops.ensureHosts(); updateWindowTitle(); applyFramePolicy() }
         .onChange(of: manager.details) { _, _ in ops.ensureHosts() }
         .onChange(of: manager.activeID) { _, _ in ops.ensureHosts(); updateWindowTitle() }
@@ -109,6 +105,37 @@ struct ContentView: View {
     }
 
     // MARK: - Detail
+
+    private var newWorkspaceMenu: some View {
+        Menu {
+            Button("New local workspace") {
+                manager.create(name: "Untitled")
+            }
+            Button("New SSH workspace") {
+                NotificationCenter.default.post(name: .bmuxNewSSH, object: nil)
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, height: 24)
+                .contentShape(Circle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .tint(BmuxTheme.muted(scheme))
+        .help("New workspace")
+        .accessibilityLabel("New workspace")
+    }
+
+    private func titlebarStatus(workspace: Workspace, tab: Tab) -> TitlebarStatus {
+        TitlebarStatus(
+            workspace: workspace,
+            pane: focusedPane(tab: tab),
+            host: focusedHost(tab: tab),
+            contrast: BmuxTheme.contrastScheme(settings: settings.applied, system: scheme)
+        )
+    }
 
     /// One surface, top to bottom: native titlebar (live folder), one
     /// control row (terminal switcher centered across the full detail
@@ -142,6 +169,13 @@ struct ContentView: View {
                 .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
             }
         }
+        // BITTyping parity: a SwiftUI-managed navigation title is what
+        // promotes the window to the real unified toolbar on macOS 27 —
+        // and only there do the traffic lights render as glossy Liquid
+        // Glass (without it they stay flat overlay discs). The toolbar's
+        // `.principal` item (live folder) occupies the center slot, so no
+        // title text is drawn; this only flips the chrome mode.
+        .navigationTitle(ws.name)
     }
 
     /// The control row: terminal switcher centered across the full detail
@@ -209,4 +243,5 @@ struct ContentView: View {
             height: max(400, settings.current.defaultHeight))
         window.setFrame(frame, display: true, animate: true)
     }
+
 }

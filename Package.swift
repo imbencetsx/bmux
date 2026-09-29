@@ -25,7 +25,19 @@ let package = Package(
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "GhosttyTheme", package: "libghostty-spm"),
             ],
-            path: "Sources/BmuxApp"
+            path: "Sources/BmuxApp",
+            // SwiftPM currently stamps the executable with the deployment
+            // target as its linked SDK version (14.0). Preserve macOS 14
+            // support while declaring the SDK that supplies the macOS 27
+            // window chrome behavior.
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-platform_version",
+                    "-Xlinker", "macos",
+                    "-Xlinker", "14.0",
+                    "-Xlinker", "27.0",
+                ])
+            ]
         ),
         .executableTarget(
             name: "BmuxLaunch",

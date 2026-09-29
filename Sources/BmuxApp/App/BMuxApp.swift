@@ -38,23 +38,24 @@ struct BMuxApp: App {
                 .environmentObject(workspaces)
                 .environmentObject(hosts)
                 .environmentObject(settings)
-                // Liquid Glass window on 26+: leave the system background
-                // alone so traffic lights blend into the terminal fill. Below
-                // that, the detail paints its own Srcery-matched fill.
+                // Let the content's theme-matched backgrounds reach the
+                // window edges, including behind the native titlebar.
                 .background {
-                    if #available(macOS 26, *) { Color.clear }
+                    Color.clear
                 }
                 .onAppear {
-                    // No native titlebar to grab, so the background drags.
+                    // Keep the themed window surface draggable.
                     NSApp.windows.forEach { $0.isMovableByWindowBackground = true }
                 }
         }
         .defaultSize(
             width: max(640, settings.current.defaultWidth),
             height: max(400, settings.current.defaultHeight))
-        // Unified Ghostty-style chrome: no separate native title strip,
-        // content extends edge to edge; traffic lights float over it.
+        // Keep the titlebar hidden so macOS 27 draws its native glossy
+        // traffic lights floating over the unified, theme-matched toolbar.
+        // No custom window buttons or traffic-light views are used.
         .windowStyle(.hiddenTitleBar)
+        .windowToolbarStyle(.unified)
         .commands {
             SidebarCommands(
                 onNewWorkspace: { workspaces.create(name: "Untitled") },
