@@ -22,7 +22,7 @@ final class WorkspaceManager: ObservableObject {
 
     init() {
         let restored = store.load()
-        if restored.workspaces.isEmpty {
+        if !restored.isRestored {
             let seed = [
                 Workspace(name: "Main", workingDirectory: NSHomeDirectory(), iconName: "terminal", colorHex: Self.accent(at: 0)),
                 Workspace(name: "Development", workingDirectory: NSHomeDirectory(), iconName: "hammer", colorHex: Self.accent(at: 1)),
@@ -39,8 +39,13 @@ final class WorkspaceManager: ObservableObject {
             // stripe) and is preserved as-is — never backfilled — so the
             // choice survives relaunches.
             self.workspaces = restored.workspaces
-            self.activeID = restored.activeID ?? restored.workspaces.first?.id
-            var details = Dictionary(uniqueKeysWithValues: restored.details.map { ($0.id, $0) })
+            self.activeID = restored.workspaces.contains(where: { $0.id == restored.activeID })
+                ? restored.activeID : restored.workspaces.first?.id
+            // A damaged save may contain duplicate detail IDs. Keep the
+            // latest entry instead of trapping during startup.
+            var details = restored.details.reduce(into: [UUID: WorkspaceDetail]()) {
+                $0[$1.id] = $1
+            }
             // Backfill details for workspaces added without state.
             for ws in restored.workspaces where details[ws.id] == nil {
                 details[ws.id] = .fresh(workspaceID: ws.id, workingDirectory: ws.workingDirectory)
@@ -57,7 +62,12 @@ final class WorkspaceManager: ObservableObject {
     func detail(for id: UUID) -> WorkspaceDetail? { details[id] }
 
     func toggleSidebar() {
-        sidebarVisible.toggle()
+        setSidebarVisible(!sidebarVisible)
+    }
+
+    func setSidebarVisible(_ visible: Bool) {
+        guard sidebarVisible != visible else { return }
+        sidebarVisible = visible
         persistSoon()
     }
 
@@ -157,7 +167,9 @@ final class WorkspaceManager: ObservableObject {
 
     func mutateDetail(_ workspaceID: UUID, _ f: (inout WorkspaceDetail) -> Void) {
         guard var d = details[workspaceID] else { return }
+        let original = d
         f(&d)
+        guard d != original else { return }
         details[workspaceID] = d
         persistSoon()
     }

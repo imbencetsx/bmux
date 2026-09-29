@@ -37,7 +37,7 @@ struct ContentView: View {
     private var columnVisibility: Binding<NavigationSplitViewVisibility> {
         Binding(
             get: { manager.sidebarVisible ? .all : .detailOnly },
-            set: { manager.sidebarVisible = ($0 != .detailOnly) }
+            set: { manager.setSidebarVisible($0 != .detailOnly) }
         )
     }
 
@@ -190,8 +190,14 @@ struct ContentView: View {
             onSplitDown: { postIntent(.splitDown) },
             onNewTerminal: { manager.addTab(to: ws.id) }
         )
-        TerminalTabStrip(workspace: ws, detail: detail, ops: ops)
-            .overlay(alignment: .trailing) { actions }
+        Group {
+            if settings.current.showSingleTab || detail.tabs.count > 1 {
+                TerminalTabStrip(workspace: ws, detail: detail, ops: ops)
+            } else {
+                Color.clear.frame(height: 40)
+            }
+        }
+        .overlay(alignment: .trailing) { actions }
     }
 
     private var emptyWorkspace: some View {

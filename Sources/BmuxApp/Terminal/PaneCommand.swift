@@ -14,18 +14,16 @@ enum PaneCommand {
     /// Preferred path is `bmux-launch` (WINCH-aware recorder). This fallback
     /// runs the inner command bare — no transcript capture — because macOS
     /// `/usr/bin/script` never forwards window-size changes to its child.
-    static func localShell(transcriptLink: String?, shell: String = ShellDetector.loginShell) -> String? {
+    static func localShell(shell: String = ShellDetector.loginShell) -> String? {
         guard shell.isSpaceFree else { return nil }
-        _ = transcriptLink
         return "\(shell) -l"
     }
 
-    static func ssh(_ ssh: SSHCommand, transcriptLink: String?) -> String? {
+    static func ssh(_ ssh: SSHCommand) -> String? {
         // Same bare-host normalization as the `bmux-launch` path: without
         // it a bare `ras-02` would be exec'd as a binary and die instantly.
         let ssh = ssh.effectiveForLaunch
         guard ssh.argvSafe else { return nil }
-        _ = transcriptLink
         return ssh.argvTokens.joined(separator: " ")
     }
 

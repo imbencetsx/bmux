@@ -21,6 +21,7 @@ import SwiftUI
 /// out through callbacks to the owner, which persists them. Transient drag
 /// state stays inside the divider until drop.
 struct SplitContainerView: View {
+    @EnvironmentObject private var settings: AppSettingsStore
     let workspace: Workspace
     let node: SplitNode
     let focusedPaneID: UUID?
@@ -36,7 +37,7 @@ struct SplitContainerView: View {
     let hostFor: (UUID) -> PaneHost?
 
     var body: some View {
-        SplitSlotsView(node: node, onRatio: onRatio)
+        SplitSlotsView(node: node, onRatio: onRatio, onDragActivity: setDragResizeThrottle)
             .backgroundPreferenceValue(PaneBoundsKey.self) { prefs in
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
@@ -66,17 +67,21 @@ struct SplitContainerView: View {
                                 // leave the representable sized once and only
                                 // visually translated).
                                 .position(x: rect.midX, y: rect.midY)
-                                .onChange(of: rect.width) { _, _ in
-                                    hostFor(pane.id)?.state.attachedPlatformView?.fitToSize()
-                                }
-                                .onChange(of: rect.height) { _, _ in
-                                    hostFor(pane.id)?.state.attachedPlatformView?.fitToSize()
-                                }
                             }
                         }
                     }
                 }
             }
+    }
+
+    private func setDragResizeThrottle(_ dragging: Bool) {
+        let configured = settings.applied.effectiveResizeThrottleMs
+        let milliseconds = dragging ? max(32, configured) : configured
+        for pane in node.panes {
+            guard let view = hostFor(pane.id)?.state.attachedPlatformView else { continue }
+            view.setResizeThrottle(milliseconds: milliseconds)
+            if !dragging { view.fitToSize() }
+        }
     }
 }
 
@@ -98,6 +103,7 @@ private struct PaneBoundsKey: PreferenceKey {
 private struct SplitSlotsView: View {
     let node: SplitNode
     let onRatio: (UUID, Double) -> Void
+    let onDragActivity: (Bool) -> Void
 
     var body: some View {
         switch node {
@@ -108,11 +114,13 @@ private struct SplitSlotsView: View {
                 .accessibilityHidden(true)
         case .split(let id, let direction, let ratio, let first, let second):
             SplitSlotPairView(direction: direction, ratio: ratio) {
-                SplitSlotsView(node: first, onRatio: onRatio)
+                SplitSlotsView(node: first, onRatio: onRatio, onDragActivity: onDragActivity)
             } second: {
-                SplitSlotsView(node: second, onRatio: onRatio)
+                SplitSlotsView(node: second, onRatio: onRatio, onDragActivity: onDragActivity)
             } onCommitRatio: {
                 onRatio(id, $0)
+            } onDragActivity: {
+                onDragActivity($0)
             }
         }
     }
@@ -127,30 +135,42 @@ private struct SplitSlotPairView<First: View, Second: View>: View {
     @ViewBuilder let first: First
     @ViewBuilder let second: Second
     let onCommitRatio: (Double) -> Void
+    let onDragActivity: (Bool) -> Void
 
     @State private var liveRatio: Double?
 
     var body: some View {
         GeometryReader { geo in
             let total = direction == .sideBySide ? geo.size.width : geo.size.height
-            let r = liveRatio ?? ratio
-            let firstLen = max(80, total * r - 0.5)
+            let available = max(0, total - 1) // one point for the divider
+            let displayedRatio = SplitRatio.clamp(liveRatio ?? ratio, available: available)
+            let firstLen = available * displayedRatio
             Group {
                 if direction == .sideBySide {
                     HStack(spacing: 0) {
                         first.frame(width: firstLen)
-                        SplitDividerView(vertical: true, total: total, ratio: ratio, liveRatio: $liveRatio, onCommitRatio: onCommitRatio)
+                        SplitDividerView(vertical: true, available: available, startRatio: SplitRatio.clamp(ratio, available: available), liveRatio: $liveRatio, onCommitRatio: onCommitRatio, onDragActivity: onDragActivity)
                         second.frame(maxWidth: .infinity)
                     }
                 } else {
                     VStack(spacing: 0) {
                         first.frame(height: firstLen)
-                        SplitDividerView(vertical: false, total: total, ratio: ratio, liveRatio: $liveRatio, onCommitRatio: onCommitRatio)
+                        SplitDividerView(vertical: false, available: available, startRatio: SplitRatio.clamp(ratio, available: available), liveRatio: $liveRatio, onCommitRatio: onCommitRatio, onDragActivity: onDragActivity)
                         second.frame(maxHeight: .infinity)
                     }
                 }
             }
         }
+    }
+}
+
+/// Keeps the divider inside the space the two panes can actually occupy.
+/// When the window is too small for two 80pt panes, they share the space.
+enum SplitRatio {
+    static func clamp(_ ratio: Double, available: CGFloat) -> Double {
+        guard available > 0 else { return 0.5 }
+        let minimum = max(0.1, Double(min(80, available / 2) / available))
+        return min(1 - minimum, max(minimum, ratio))
     }
 }
 
@@ -160,12 +180,14 @@ private struct SplitSlotPairView<First: View, Second: View>: View {
 private struct SplitDividerView: View {
     @Environment(\.colorScheme) private var scheme
     let vertical: Bool
-    let total: CGFloat
-    let ratio: Double
+    let available: CGFloat
+    let startRatio: Double
     @Binding var liveRatio: Double?
     let onCommitRatio: (Double) -> Void
+    let onDragActivity: (Bool) -> Void
 
     @State private var hovering = false
+    @State private var dragging = false
 
     var body: some View {
         Rectangle()
@@ -175,26 +197,43 @@ private struct SplitDividerView: View {
                 (vertical ? Color.clear.frame(width: 9) : Color.clear.frame(height: 9))
                     .contentShape(Rectangle())
                     .gesture(
-                        DragGesture(minimumDistance: 2)
+                        // The divider moves as the panes resize. Global
+                        // coordinates keep translation tied to the pointer
+                        // instead of feeding its own movement back into it.
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { value in
-                                let start = liveRatio ?? ratio
-                                let delta = Double((vertical ? value.translation.width : value.translation.height) / total)
-                                liveRatio = min(0.9, max(0.1, start + delta))
+                                if !dragging {
+                                    dragging = true
+                                    onDragActivity(true)
+                                }
+                                let next = draggedRatio(translation: value.translation)
+                                if liveRatio != next { liveRatio = next }
                             }
-                            .onEnded { _ in
-                                if let r = liveRatio { onCommitRatio(r) }
+                            .onEnded { value in
+                                onCommitRatio(draggedRatio(translation: value.translation))
                                 liveRatio = nil
+                                dragging = false
+                                onDragActivity(false)
                             }
                     )
                     .accessibilityAdjustableAction { direction in
                         switch direction {
-                        case .increment: onCommitRatio(min(0.9, ratio + 0.05))
-                        case .decrement: onCommitRatio(max(0.1, ratio - 0.05))
+                        case .increment: onCommitRatio(SplitRatio.clamp(startRatio + 0.05, available: available))
+                        case .decrement: onCommitRatio(SplitRatio.clamp(startRatio - 0.05, available: available))
                         @unknown default: break
                         }
                     }
                     .accessibilityLabel("Split divider")
             }
             .onHover { hovering = $0 }
+            .onDisappear {
+                if dragging { onDragActivity(false) }
+            }
+    }
+
+    private func draggedRatio(translation: CGSize) -> Double {
+        guard available > 0 else { return 0.5 }
+        let distance = vertical ? translation.width : translation.height
+        return SplitRatio.clamp(startRatio + Double(distance / available), available: available)
     }
 }

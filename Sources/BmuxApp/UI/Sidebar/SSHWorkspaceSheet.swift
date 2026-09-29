@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Creates an SSH workspace. The command runs verbatim, so existing
-/// `~/.ssh/config` hosts, keys and agents keep working with no second
-/// SSH system to configure.
+/// Creates an SSH workspace. Space-free SSH arguments and config host names
+/// run through the user's existing SSH configuration and agent.
 struct SSHWorkspaceSheet: View {
     @Environment(\.colorScheme) private var scheme
     @EnvironmentObject private var settings: AppSettingsStore
@@ -38,7 +37,7 @@ struct SSHWorkspaceSheet: View {
                 if !command.isEmpty {
                     statusLine
                         .font(.caption)
-                        .foregroundStyle(parsed.isValid ? AnyShapeStyle(.secondary) : AnyShapeStyle(BmuxTheme.error(scheme)))
+                        .foregroundStyle(parsed.isValid && parsed.argvSafe ? AnyShapeStyle(.secondary) : AnyShapeStyle(BmuxTheme.error(scheme)))
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Remote tmux session (optional)").font(.caption).foregroundStyle(.secondary)
@@ -47,10 +46,13 @@ struct SSHWorkspaceSheet: View {
                         .focused($focused, equals: .tmux)
                         .onSubmit { if canSave { save() } }
                 }
-                if !tmuxSession.isEmpty {
-                    Text("Reconnects reattach to the live remote session instead of starting over.")
+                if !requestedTmuxSession.isEmpty {
+                    Text(PaneLauncher.sanitizedTmuxName(requestedTmuxSession) == nil
+                         ? "Use only letters, numbers, underscores, or hyphens."
+                         : "Reconnects reattach to the live remote session instead of starting over.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(PaneLauncher.sanitizedTmuxName(requestedTmuxSession) == nil
+                                         ? AnyShapeStyle(BmuxTheme.error(scheme)) : AnyShapeStyle(.secondary))
                 }
                 HStack {
                     Spacer()
@@ -81,12 +83,21 @@ struct SSHWorkspaceSheet: View {
     }
 
     private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && parsed.isValid
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && parsed.isValid
+            && parsed.argvSafe
+            && (requestedTmuxSession.isEmpty || PaneLauncher.sanitizedTmuxName(requestedTmuxSession) != nil)
+    }
+
+    private var requestedTmuxSession: String {
+        tmuxSession.trimmingCharacters(in: .whitespaces)
     }
 
     private var statusLine: some View {
         Group {
-            if let host = parsed.displayHost {
+            if parsed.isValid, !parsed.argvSafe {
+                Text("Arguments with spaces cannot be launched. Use an SSH config host for paths with spaces.")
+            } else if let host = parsed.displayHost {
                 Text("Host: \(host)\(parsed.port.map { " :\($0)" } ?? "")")
             } else {
                 Text("Needs a host, e.g. ssh user@example.com")

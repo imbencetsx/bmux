@@ -18,6 +18,9 @@ final class PaneHost: ObservableObject {
     }
 
     let paneID: UUID
+    /// Distinguishes callbacks from a retired surface after the same pane
+    /// ID has been reconnected with a new host.
+    let generation: UUID
     let controller: TerminalController
     let state: TerminalViewState
     /// The native terminal view owns Ghostty's coordinator and therefore the
@@ -32,11 +35,13 @@ final class PaneHost: ObservableObject {
 
     init(
         launch: Launch,
+        generation: UUID,
         controller: TerminalController,
         onClose: @escaping (Bool) -> Void,
         onCwd: @escaping (String?) -> Void
     ) {
         self.paneID = launch.paneID
+        self.generation = generation
         self.controller = controller
         self.terminalView = TerminalView(frame: .zero)
         let state = TerminalViewState(controller: controller)
@@ -92,9 +97,9 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
         self.transcripts.maxFileBytes = Self.transcriptCap(settings)
     }
 
-    /// Push committed settings: rotation cap now, engine theme/config
-    /// live (surfaces keep their grids and processes), and resize-coalesce
-    /// policy on every mounted surface without rebuilding them.
+    /// Push committed settings: the transcript cap for new launches,
+    /// engine theme/config live (surfaces keep their grids and processes),
+    /// and resize-coalesce policy on every mounted surface.
     func applySettings(_ settings: AppSettings) {
         appSettings = settings
         transcripts.maxFileBytes = Self.transcriptCap(settings)
@@ -177,21 +182,22 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     // MARK: - Private
 
     private func spawn(workspace: Workspace, pane: Pane, manager: WorkspaceManager) -> PaneHost {
-        transcripts.appendSessionHeader(paneID: pane.id, command: describe(workspace: workspace))
+        transcripts.prepareForSession(paneID: pane.id)
         let wsID = workspace.id, pid = pane.id
+        let generation = UUID()
         let isLocal = workspace.kind == .local
         let launch = launchConfig(workspace: workspace, pane: pane)
         let host = PaneHost(
             launch: launch,
+            generation: generation,
             controller: controller,
             onClose: { [weak self] _ in
-                let born = self?.hosts[pid]?.bornAt ?? .distantPast
-                self?.handleClose(workspaceID: wsID, paneID: pid, bornAt: born, manager: manager)
+                self?.handleClose(workspaceID: wsID, paneID: pid, generation: generation, manager: manager)
             },
             onCwd: { [weak self] path in
                 // Local only: an SSH pane's reported directory is REMOTE and
                 // must never become a local spawn directory.
-                guard isLocal, let path else { return }
+                guard isLocal, let path, self?.hosts[pid]?.generation == generation else { return }
                 self?.handleCwd(workspaceID: wsID, paneID: pid, path: path, manager: manager)
             }
         )
@@ -201,8 +207,8 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     }
 
     /// Command + env + cwd for one spawn. Prefers the `bmux-launch` helper
-    /// (auto-restore); falls back to a direct `script` command (records but
-    /// doesn't restore) when the helper can't be installed.
+    /// (auto-restore); falls back to a direct command without recording when
+    /// the helper can't be installed.
     private func launchConfig(workspace: Workspace, pane: Pane) -> PaneHost.Launch {
         let tsPath = transcripts.path(for: pane.id)
         let basePath = ProcessInfo.processInfo.environment["PATH"]
@@ -215,7 +221,8 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
                 let env = PaneLauncher.environment(
                     transcriptPath: tsPath, restore: restore,
                     inner: "\(shell) -l", basePath: basePath,
-                    restoreBytes: restoreBytes)
+                    restoreBytes: restoreBytes,
+                    maxTranscriptBytes: transcripts.maxFileBytes)
                 return PaneHost.Launch(
                     paneID: pane.id,
                     command: PaneLauncher.command(paneID: pane.id), env: env,
@@ -225,7 +232,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
             // Fallback: direct recording, no restore step.
             return PaneHost.Launch(
                     paneID: pane.id,
-                command: PaneCommand.localShell(transcriptLink: transcripts.linkPath(for: pane.id), shell: shell),
+                command: PaneCommand.localShell(shell: shell),
                 env: [:],
                 workingDirectory: pane.workingDirectory ?? workspace.workingDirectory,
                 resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
@@ -241,7 +248,8 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
                 let env = PaneLauncher.environment(
                     transcriptPath: tsPath, restore: false,
                     inner: innerTokens.joined(separator: " "), basePath: basePath,
-                    clear: true, restoreBytes: restoreBytes)
+                    clear: true, restoreBytes: restoreBytes,
+                    maxTranscriptBytes: transcripts.maxFileBytes)
                 return PaneHost.Launch(
                     paneID: pane.id,
                     command: PaneLauncher.command(paneID: pane.id),
@@ -251,7 +259,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
             }
             return PaneHost.Launch(
                     paneID: pane.id,
-                command: PaneCommand.ssh(ssh, transcriptLink: transcripts.linkPath(for: pane.id)),
+                command: PaneCommand.ssh(ssh),
                 env: [:],
                 workingDirectory: nil,
                 resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
@@ -267,18 +275,18 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
         return ShellDetector.loginShell
     }
 
-    private func handleClose(workspaceID: UUID, paneID: UUID, bornAt: Date, manager: WorkspaceManager) {
+    private func handleClose(workspaceID: UUID, paneID: UUID, generation: UUID, manager: WorkspaceManager) {
         // Ignore closes for retired panes (user closed the pane; the surface
         // teardown itself fires onClose). Without this, teardown would
         // resurrect the pane.
-        guard hosts[paneID] != nil else { return }
+        guard let host = hosts[paneID], host.generation == generation else { return }
         // Local shells that lived a while get a fresh shell automatically
         // (spec: restart processes where possible). Quick deaths surface an
         // overlay instead of crash-looping. SSH never auto-reconnects.
         // Both halves are settings-driven (see Terminal settings).
         guard let ws = manager.workspaces.first(where: { $0.id == workspaceID }) else { return }
         let livedLong = appSettings.autoRelaunch
-            && Date().timeIntervalSince(bornAt) > max(0, appSettings.relaunchAfterSeconds)
+            && Date().timeIntervalSince(host.bornAt) > max(0, appSettings.relaunchAfterSeconds)
         if ws.kind == .local, livedLong, let pane = paneIn(manager, workspaceID: workspaceID, paneID: paneID) {
             hosts.removeValue(forKey: paneID)
             let replacement = spawn(workspace: ws, pane: pane, manager: manager)
@@ -312,10 +320,4 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
             .first { $0.id == paneID }
     }
 
-    private func describe(workspace: Workspace) -> String {
-        switch workspace.kind {
-        case .local: return "local shell in \(workspace.workingDirectory)"
-        case .ssh: return workspace.sshCommand ?? "ssh"
-        }
-    }
 }

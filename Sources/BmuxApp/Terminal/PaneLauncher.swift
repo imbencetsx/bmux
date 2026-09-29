@@ -112,13 +112,14 @@ enum PaneLauncher {
     ///   repaints itself).
     /// - `clear`: true for SSH panes — when nothing was restored, the
     ///   helper opens with a full clear (grid + scrollback) instead.
-    static func environment(transcriptPath: String, restore: Bool, inner: String, basePath: String?, clear: Bool = false, restoreBytes: Int = restoreBytes) -> [String: String] {
+    static func environment(transcriptPath: String, restore: Bool, inner: String, basePath: String?, clear: Bool = false, restoreBytes: Int = restoreBytes, maxTranscriptBytes: UInt64 = TranscriptStore.defaultMaxFileBytes) -> [String: String] {
         let base = (basePath?.isEmpty == false) ? basePath! : "/usr/bin:/bin:/usr/sbin:/sbin"
         var out = [
             "PATH": "\(binDir.path):\(base)",
             "BMUX_TS": transcriptPath,
             "BMUX_RESTORE": restore ? "1" : "0",
             "BMUX_RESTORE_BYTES": String(max(1024, restoreBytes)),
+            "BMUX_TS_MAX_BYTES": String(max(1, maxTranscriptBytes)),
             "BMUX_CLEAR": clear ? "1" : "0",
             "BMUX_INNER": inner,
         ]
