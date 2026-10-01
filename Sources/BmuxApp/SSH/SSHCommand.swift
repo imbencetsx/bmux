@@ -1,8 +1,8 @@
 import Foundation
+import BmuxSSH
 
-/// An SSH workspace target. Ghostty's surface command splits on whitespace,
-/// so launch accepts only arguments that remain single, space-free tokens.
-/// Parsed fields also drive the host badge and port subtitle.
+/// Parsed SSH transport options and remote command. Arguments travel as a
+/// structured plan so identity paths and option values may contain spaces.
 struct SSHCommand: Hashable, Codable {
     var raw: String
 
@@ -13,27 +13,20 @@ struct SSHCommand: Hashable, Codable {
     var isValid: Bool { host != nil }
 
     /// Tokens respecting single/double quotes (quotes stripped).
-    /// Matches how the tokens will arrive after ghostty's naive splitting
-    /// ONLY when no token contains spaces — see `argvSafe`.
     var argvTokens: [String] { tokens }
-
-    /// Whether the command survives naive whitespace splitting: every token
-    /// must be space-free (ghostty's surface `command` does no quote
-    /// processing). `ssh -i "/my keys/id"` is NOT safe — use a
-    /// `~/.ssh/config` Host entry instead (which is always safe).
-    var argvSafe: Bool {
-        let toks = tokens
-        guard !toks.isEmpty else { return false }
-        return toks.allSatisfy { !$0.contains(where: \.isWhitespace) }
-    }
 
     private var tokens: [String] {
         var out: [String] = []
         var cur = ""
         var quote: Character?
         var inToken = false
+        var escaped = false
         for ch in raw {
-            if let q = quote {
+            if escaped {
+                cur.append(ch); escaped = false; inToken = true
+            } else if ch == "\\", quote != "'" {
+                escaped = true; inToken = true
+            } else if let q = quote {
                 if ch == q { quote = nil } else { cur.append(ch) }
             } else if ch == "'" || ch == "\"" {
                 quote = ch; inToken = true
@@ -43,6 +36,7 @@ struct SSHCommand: Hashable, Codable {
                 cur.append(ch); inToken = true
             }
         }
+        guard quote == nil, !escaped else { return [] }
         if inToken { out.append(cur) }
         return out
     }
@@ -75,7 +69,7 @@ struct SSHCommand: Hashable, Codable {
         if toks.first != "ssh" { return toks.startIndex } // bare `user@host`?
         var i = toks.index(after: toks.startIndex)
         // Flags that consume a following value.
-        let valued: Set<String> = ["-p", "-i", "-J", "-l", "-o", "-F", "-L", "-R", "-D", "-W", "-w", "-b", "-c", "-m", "-S"]
+        let valued: Set<String> = ["-p", "-i", "-J", "-l", "-o", "-F", "-L", "-R", "-D", "-W", "-w", "-b", "-c", "-m", "-S", "-B", "-E", "-e", "-O", "-Q"]
         while i < toks.endIndex {
             let t = toks[i]
             if t == "--" { i = toks.index(after: i); break }
@@ -105,5 +99,35 @@ struct SSHCommand: Hashable, Codable {
     var displayHost: String? {
         guard let h = host else { return nil }
         return h.split(separator: "@").last.map(String.init)
+    }
+
+    /// Keep transport options separate from the remote command. Encoding
+    /// the plan in the environment preserves argument boundaries even when
+    /// an option or identity path contains spaces.
+    func persistentSession(paneID: UUID, prefix: String?) -> RemoteSession? {
+        let ssh = effectiveForLaunch
+        guard ssh.argvTokens.first == "ssh", let hostIndex = ssh.hostTokenIndex,
+              let host = ssh.host, !host.isEmpty, !host.hasPrefix("-") else { return nil }
+        var options = Array(ssh.argvTokens[1..<hostIndex])
+        // These modes consume/disable the protocol channel or exit before
+        // starting a remote terminal. Values of other options may contain
+        // those letters, so inspect flags rather than arbitrary tokens.
+        let valued: Set<String> = ["-p", "-i", "-J", "-l", "-o", "-F", "-L", "-R", "-D", "-w", "-b", "-c", "-m", "-S", "-B", "-E", "-e"]
+        var i = 0
+        while i < options.count {
+            let token = options[i]
+            let flag = String(token.prefix(2))
+            if ["-W", "-O", "-Q"].contains(flag) { return nil }
+            if valued.contains(flag) {
+                if token.count == 2 { i += 1 }
+            } else if token.hasPrefix("-"), token.dropFirst().contains(where: { "nNfVG".contains($0) }) {
+                return nil
+            }
+            i += 1
+        }
+        options.removeAll { $0 == "--" }
+        return RemoteSession(paneID: paneID.uuidString, prefix: prefix,
+                             sshArguments: options + [host],
+                             remoteCommand: Array(ssh.argvTokens.dropFirst(hostIndex + 1)))
     }
 }

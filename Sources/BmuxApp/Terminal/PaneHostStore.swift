@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import GhosttyTerminal
+import BmuxSSH
 
 /// Live libghostty surface for one pane. This file and `TerminalPaneView` are
 /// the only places that touch GhosttyTerminal types.
@@ -84,10 +85,12 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     /// via `applySettings`, never respawning shells.
     private let controller: TerminalController
     private var hosts: [UUID: PaneHost] = [:]
+    private var closingHosts: [UUID: PaneHost] = [:]
+    private let remoteCleanup = RemoteSessionCleanup()
     var transcripts = TranscriptStore()
 
-    /// Latest committed settings. Read at spawn time (shell, restore tail,
-    /// SSH self-clear) and in teardown (relaunch policy); refreshed by
+    /// Latest committed settings. Read at spawn time (shell, restore tail)
+    /// and in teardown (relaunch policy); refreshed by
     /// `applySettings` alongside the live engine reconfigure.
     private(set) var appSettings: AppSettings
 
@@ -143,10 +146,13 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     /// handlers (`.onAppear`/`.onChange`), never from a View body.
     func ensure(workspace: Workspace, detail: WorkspaceDetail, manager: WorkspaceManager) {
         guard shouldSpawn(workspace: workspace) else { return }
-        for tab in detail.tabs {
-            for pane in tab.root.panes where hosts[pane.id] == nil {
-                _ = spawn(workspace: workspace, pane: pane, manager: manager)
-            }
+        let missing = detail.tabs.flatMap { $0.root.panes }.filter { hosts[$0.id] == nil }
+        guard !missing.isEmpty else { return }
+        // Persist stable pane identities before creating remote processes.
+        // Ratio/cwd changes also call ensure; keep those debounced.
+        manager.flush()
+        for pane in missing {
+            _ = spawn(workspace: workspace, pane: pane, manager: manager)
         }
     }
 
@@ -156,7 +162,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     func shouldSpawn(workspace: Workspace) -> Bool {
         guard workspace.kind == .ssh else { return true }
         let ssh = SSHCommand(raw: workspace.sshCommand ?? "")
-        guard ssh.isValid, ssh.argvSafe else { return false }
+        guard ssh.persistentSession(paneID: UUID(), prefix: workspace.sshTmuxSession) != nil else { return false }
         if let tmux = workspace.sshTmuxSession, !tmux.isEmpty {
             return PaneLauncher.sanitizedTmuxName(tmux) != nil
         }
@@ -177,6 +183,28 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     func retire(paneID: UUID) {
         hosts.removeValue(forKey: paneID) // dealloc frees the surface/child
         epoch += 1
+    }
+
+    /// Explicit user close, distinct from transport detach/respawn/app quit.
+    func close(paneID: UUID, workspace: Workspace) {
+        if workspace.kind == .ssh,
+           let session = SSHCommand(raw: workspace.sshCommand ?? "")
+            .persistentSession(paneID: paneID, prefix: workspace.sshTmuxSession) {
+            remoteCleanup.enqueue(session)
+            let closeFile = RemoteSessionCleanup.closeFile(for: session)
+            try? FileManager.default.createDirectory(at: closeFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data().write(to: closeFile, options: .atomic)
+            // Let the authenticated control connection send kill-session
+            // before releasing the surface. This also works with passwords.
+            if let host = hosts[paneID] {
+                closingHosts[paneID] = host
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    self?.closingHosts.removeValue(forKey: paneID)
+                }
+            }
+        }
+        retire(paneID: paneID)
     }
 
     // MARK: - Private
@@ -203,6 +231,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
         )
         hosts[pane.id] = host
         epoch += 1
+        setStatus(.connected, workspaceID: workspace.id, paneID: pane.id, manager: manager)
         return host
     }
 
@@ -238,18 +267,20 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
                 resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
         case .ssh:
             let ssh = SSHCommand(raw: workspace.sshCommand ?? "")
-            let tmux = workspace.sshTmuxSession
             if PaneLauncher.install() != nil,
-               let innerTokens = PaneLauncher.sshInner(ssh, tmuxSession: tmux, selfClear: appSettings.sshSelfClear) {
-                // SSH panes never replay transcripts: stale remote output
-                // above a fresh login reads as live state that isn't. The
-                // helper opens cleared instead (BMUX_CLEAR); remote-tmux
-                // reattach repaints itself on top of the clear, harmlessly.
-                let env = PaneLauncher.environment(
+               let session = ssh.persistentSession(paneID: pane.id, prefix: workspace.sshTmuxSession),
+               let data = try? JSONEncoder().encode(session), let json = String(data: data, encoding: .utf8) {
+                // Remote state comes from tmux's current grid/history, never
+                // a stale recording. bmux-launch reconnects this same ID.
+                var env = PaneLauncher.environment(
                     transcriptPath: tsPath, restore: false,
-                    inner: innerTokens.joined(separator: " "), basePath: basePath,
-                    clear: true, restoreBytes: restoreBytes,
+                    inner: "ssh", basePath: basePath,
+                    restoreBytes: restoreBytes,
                     maxTranscriptBytes: transcripts.maxFileBytes)
+                env["BMUX_REMOTE_SESSION"] = json
+                env["BMUX_CLOSE_FILE"] = RemoteSessionCleanup.closeFile(for: session).path
+                env["BMUX_CLOSE_DIRECTORY"] = RemoteSessionCleanup.closeFile(for: session).deletingLastPathComponent().path
+                env["BMUX_CLEANUP_FILE"] = remoteCleanup.journalPath
                 return PaneHost.Launch(
                     paneID: pane.id,
                     command: PaneLauncher.command(paneID: pane.id),
@@ -257,10 +288,10 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
                     workingDirectory: nil,
                     resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
             }
-            return PaneHost.Launch(
-                    paneID: pane.id,
-                command: PaneCommand.ssh(ssh),
-                env: [:],
+            // Fail visibly rather than quietly launching a disposable SSH
+            // session and losing the persistence contract.
+            return PaneHost.Launch(paneID: pane.id,
+                command: "/usr/bin/printf bmux-launch-is-missing.-Rebuild-the-app-to-enable-persistent-SSH.", env: [:],
                 workingDirectory: nil,
                 resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
         }
@@ -282,7 +313,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
         guard let host = hosts[paneID], host.generation == generation else { return }
         // Local shells that lived a while get a fresh shell automatically
         // (spec: restart processes where possible). Quick deaths surface an
-        // overlay instead of crash-looping. SSH never auto-reconnects.
+        // overlay instead of crash-looping. The SSH helper owns reconnects.
         // Both halves are settings-driven (see Terminal settings).
         guard let ws = manager.workspaces.first(where: { $0.id == workspaceID }) else { return }
         let livedLong = appSettings.autoRelaunch

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Connection state of one terminal pane. Persisted: a relaunched app must
-/// show SSH panes as disconnected (never delete them) and respawn local panes.
+/// restore pane identities (never delete them) and reattach SSH processes.
 enum PaneStatus: Codable, Hashable {
     case connected
     case disconnected(exitCode: Int?, endedAt: Date)

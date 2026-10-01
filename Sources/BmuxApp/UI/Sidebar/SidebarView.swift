@@ -156,9 +156,9 @@ struct SidebarView: View {
 
     private func deleteWorkspace(_ id: UUID) {
         // Retire live surfaces first so teardown onClose can't resurrect panes.
-        if let detail = manager.detail(for: id) {
+        if let workspace = manager.workspaces.first(where: { $0.id == id }), let detail = manager.detail(for: id) {
             for tab in detail.tabs {
-                for pane in tab.root.panes { hosts.retire(paneID: pane.id) }
+                for pane in tab.root.panes { hosts.close(paneID: pane.id, workspace: workspace) }
             }
         }
         manager.remove(id)

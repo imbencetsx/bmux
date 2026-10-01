@@ -10,8 +10,16 @@ splits, and SSH sessions.
   side in the sidebar, each with a color stripe, live folder, and
   terminal/pane counts. Switching never loses state.
 - **Sessions survive.** Local panes re-render their scrollback on respawn;
-  SSH panes can reattach to a live remote tmux session. Reconnects feel
+  SSH panes automatically reattach to their own live remote tmux sessions. Reconnects feel
   like coming back, not starting over.
+
+## Persistent SSH
+
+To inspect bmux sessions from another SSH login:
+
+```sh
+tmux -L bmux-v1 list-sessions
+```
 
 ## Quick start
 
@@ -31,4 +39,36 @@ swift build
 open Bmux.app
 ```
 
-<!-- Screenshot welcome: add `screenshot.png` next to this file and reference it here. -->
+## Where things live
+
+- Workspaces & settings: `~/Library/Application Support/Bmux/`
+  (`workspaces.json`, `settings.json`, `generated-ghostty.conf`)
+- Per-pane transcripts: `~/Library/Application Support/Bmux/Transcripts/`
+- The launcher helper installs itself to `~/Library/Application Support/Bmux/bin/`
+
+Local state is written only in Application Support. Remote SSH sessions live
+in the host's tmux server. Deleting local app state does not terminate them.
+
+## How it works (briefly)
+
+Each pane spawns `bmux-launch`, a tiny WINCH-aware PTY relay that records
+output to the pane's transcript and forwards resizes so fullscreen TUIs
+keep working. For SSH, the helper translates tmux control output into native
+terminal output, reconstructs current history/screens on attach and sends
+input as hexadecimal bytes. Ghostty renders the grid on Metal; SwiftUI owns everything
+around it. Shell integration reports the working directory, so the
+titlebar folder badge and sidebar subtitles track `cd` live.
+
+The engine is pinned (`libghostty-spm`, exact version in `Package.swift`)
+and configured entirely through its API — the `generated-ghostty.conf` in
+Application Support is a human-readable record of that configuration.
+
+## Verification
+
+`swift test` includes real tmux checks when tmux is installed locally. On
+macOS, `python3 Scripts/test-ssh-persistence.py` after a debug build also
+tests the actual launcher over an isolated loopback SSH server: transport
+failure, remote PID survival, Vim, resize, quit/reopen and explicit/queued
+remote cleanup. Generated keys, server and sessions are removed afterwards.
+Add `--encrypted-key` to exercise passphrase prompts on initial attach,
+automatic reconnect and reopen.

@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Creates an SSH workspace. Space-free SSH arguments and config host names
-/// run through the user's existing SSH configuration and agent.
+/// Creates a persistent SSH workspace using the user's SSH config/agent.
 struct SSHWorkspaceSheet: View {
     @Environment(\.colorScheme) private var scheme
     @EnvironmentObject private var settings: AppSettingsStore
@@ -37,23 +36,24 @@ struct SSHWorkspaceSheet: View {
                 if !command.isEmpty {
                     statusLine
                         .font(.caption)
-                        .foregroundStyle(parsed.isValid && parsed.argvSafe ? AnyShapeStyle(.secondary) : AnyShapeStyle(BmuxTheme.error(scheme)))
+                        .foregroundStyle(canConnect ? AnyShapeStyle(.secondary) : AnyShapeStyle(BmuxTheme.error(scheme)))
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Remote tmux session (optional)").font(.caption).foregroundStyle(.secondary)
+                    Text("Session name prefix (optional)").font(.caption).foregroundStyle(.secondary)
                     TextField("bmux", text: $tmuxSession)
                         .textFieldStyle(.roundedBorder)
                         .focused($focused, equals: .tmux)
                         .onSubmit { if canSave { save() } }
                 }
                 if !requestedTmuxSession.isEmpty {
-                    Text(PaneLauncher.sanitizedTmuxName(requestedTmuxSession) == nil
-                         ? "Use only letters, numbers, underscores, or hyphens."
-                         : "Reconnects reattach to the live remote session instead of starting over.")
+                    Text("Use only letters, numbers, underscores, or hyphens.")
                         .font(.caption)
                         .foregroundStyle(PaneLauncher.sanitizedTmuxName(requestedTmuxSession) == nil
                                          ? AnyShapeStyle(BmuxTheme.error(scheme)) : AnyShapeStyle(.secondary))
                 }
+                Text("Sessions stay running when you disconnect or quit. Reopening restores your tabs and panes. Closing a pane ends its remote session. Requires tmux 3.2+ on the host.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 HStack {
                     Spacer()
                     BmuxGlassGroup(spacing: 8) {
@@ -84,9 +84,12 @@ struct SSHWorkspaceSheet: View {
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && parsed.isValid
-            && parsed.argvSafe
+            && canConnect
             && (requestedTmuxSession.isEmpty || PaneLauncher.sanitizedTmuxName(requestedTmuxSession) != nil)
+    }
+
+    private var canConnect: Bool {
+        parsed.persistentSession(paneID: UUID(), prefix: nil) != nil
     }
 
     private var requestedTmuxSession: String {
@@ -95,8 +98,8 @@ struct SSHWorkspaceSheet: View {
 
     private var statusLine: some View {
         Group {
-            if parsed.isValid, !parsed.argvSafe {
-                Text("Arguments with spaces cannot be launched. Use an SSH config host for paths with spaces.")
+            if parsed.isValid, !canConnect {
+                Text("Use ssh host or ssh user@host with interactive SSH options.")
             } else if let host = parsed.displayHost {
                 Text("Host: \(host)\(parsed.port.map { " :\($0)" } ?? "")")
             } else {

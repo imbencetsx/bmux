@@ -10,13 +10,11 @@ struct Workspace: Identifiable, Codable, Hashable {
     var id: UUID
     var name: String
     var kind: Kind
-    /// Local working directory, or SSH command/config string for `.ssh`.
-    /// Phase 1: local only. SSH fields are reserved for Phase 3.
+    /// Local working directory. Never used as a remote spawn directory.
     var workingDirectory: String
     var sshCommand: String?
-    /// Remote tmux session to attach (`ssh -t … tmux new -A -s …`).
-    /// When set and the server has tmux, disconnects/relaunches reattach to
-    /// the LIVE remote session (true tmux semantics, no custom daemon).
+    /// Session-name prefix for unique per-pane remote sessions. The JSON
+    /// key is retained for compatibility with older workspace files.
     var sshTmuxSession: String?
     var iconName: String
     var colorHex: String?

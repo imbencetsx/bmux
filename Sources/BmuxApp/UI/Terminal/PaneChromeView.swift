@@ -35,14 +35,14 @@ struct PaneChromeView: View {
 
     /// Why an SSH workspace can't spawn (local panes always spawn).
     private enum SSHIssue {
-        case invalid, spacesInArgs, badTmuxName
+        case invalid, unsupportedCommand, badTmuxName
     }
 
     private var sshIssue: SSHIssue? {
         guard workspace.kind == .ssh else { return nil }
         let cmd = SSHCommand(raw: workspace.sshCommand ?? "")
         if !cmd.isValid { return .invalid }
-        if !cmd.argvSafe { return .spacesInArgs }
+        if cmd.persistentSession(paneID: pane.id, prefix: workspace.sshTmuxSession) == nil { return .unsupportedCommand }
         if let tmux = workspace.sshTmuxSession, !tmux.isEmpty,
            PaneLauncher.sanitizedTmuxName(tmux) == nil { return .badTmuxName }
         return nil
@@ -77,7 +77,7 @@ struct PaneChromeView: View {
                     Button("Split Down") { onSplit(.stacked) }
                     Divider()
                     Button("View History") { showingHistory = true }
-                    if pane.status != .connected, sshIssue == nil {
+                    if (workspace.kind == .ssh || pane.status != .connected), sshIssue == nil {
                         Button("Reconnect") { onReconnect() }
                     }
                     Divider()
@@ -178,7 +178,7 @@ struct PaneChromeView: View {
     private var overlayTitle: String {
         switch sshIssue {
         case .invalid: return "Invalid SSH command"
-        case .spacesInArgs: return "SSH command needs ~/.ssh/config"
+        case .unsupportedCommand: return "Persistent sessions need SSH"
         case .badTmuxName: return "Invalid tmux session name"
         case nil:
             return workspace.kind == .ssh ? "SSH disconnected" : "Shell exited"
@@ -187,7 +187,7 @@ struct PaneChromeView: View {
 
     private var overlayIcon: String {
         switch sshIssue {
-        case .invalid, .spacesInArgs, .badTmuxName: return "exclamationmark.triangle"
+        case .invalid, .unsupportedCommand, .badTmuxName: return "exclamationmark.triangle"
         case nil: return workspace.kind == .ssh ? "wifi.slash" : "terminal"
         }
     }
@@ -196,9 +196,8 @@ struct PaneChromeView: View {
         switch sshIssue {
         case .invalid:
             return "No host found in the SSH command. Edit the workspace to fix it — nothing was deleted."
-        case .spacesInArgs:
-            let host = SSHCommand(raw: workspace.sshCommand ?? "").displayHost ?? "myhost"
-            return "This command has quoted paths with spaces, which the terminal launcher can't pass through. Move the options into a Host entry in ~/.ssh/config and set this workspace's command to ssh " + host + "."
+        case .unsupportedCommand:
+            return "Use ssh host or ssh user@host. Custom transport wrappers and mosh cannot use the tmux connection layer."
         case .badTmuxName:
             return "Tmux session names may only contain letters, numbers, underscore and hyphen. Fix the name in the workspace settings — nothing was deleted."
         case nil:

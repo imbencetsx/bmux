@@ -1,32 +1,9 @@
 import Foundation
 import GhosttyTerminal
 
-/// Per-pane launcher: makes every (re)spawn restore like tmux reattach, and
-/// records the session through a WINCH-aware PTY relay (`bmux-launch`).
-///
-/// Problem: ghostty's surface `command` splits naively on whitespace, so
-/// paths/arguments with spaces can never travel on the command line — and a
-/// restore step needs per-pane data (transcript path, inner command).
-/// Solution: the command line carries only `bmux-launch <pane-id>` (a bare
-/// name resolved via PATH); everything else travels in the environment
-/// (`env_vars` pass through untouched, spaces included).
-///
-/// The helper then:
-///  1. dumps the tail of the previous transcript to its stdout — those bytes
-///     are terminal OUTPUT: they re-render into the fresh grid/scrollback
-///     and are never executed (nothing is sent to the shell's stdin);
-///  2. otherwise (nothing restored) emits a full clear — home + erase
-///     display + erase scrollback — but only when BMUX_CLEAR=1, which the
-///     app sets for SSH panes so remote sessions always start cleared;
-///  3. opens a child PTY for BMUX_INNER, relays I/O, appends output to the
-///     transcript, and **forwards SIGWINCH / TIOCSWINSZ** so shells and
-///     TUIs actually see window resizes (macOS `/usr/bin/script` does not).
-///
-/// SSH panes never restore (step 1 is skipped): replaying stale remote
-/// output above a fresh login would read as live remote state that isn't.
-/// Remote-tmux panes skip it because reattaching already repaints
-/// everything; plain-SSH panes skip it and take the step-2 clear instead.
-/// Local panes keep tmux-like restore and never clear.
+/// Installs the native PTY helper and builds its environment. Local shells
+/// restore recorded output; persistent SSH uses a structured RemoteSession
+/// plan and tmux's current history/screen instead of replaying recordings.
 enum PaneLauncher {
     static let binaryName = "bmux-launch"
     /// Default restore tail when the pane didn't specify one (matches the
@@ -107,11 +84,8 @@ enum PaneLauncher {
 
     /// Environment for the pane: helper discovery + restore data.
     /// - `inner`: already-validated space-free tokens (`shell -l`, `ssh …`).
-    /// - `restore`: false for SSH panes (fresh remote state must never be
-    ///   confused with stale replay) and remote-tmux panes (reattach
-    ///   repaints itself).
-    /// - `clear`: true for SSH panes — when nothing was restored, the
-    ///   helper opens with a full clear (grid + scrollback) instead.
+    /// - `restore`: false for SSH panes; tmux supplies their current state.
+    /// - `clear`: optionally clear the grid when nothing was restored.
     static func environment(transcriptPath: String, restore: Bool, inner: String, basePath: String?, clear: Bool = false, restoreBytes: Int = restoreBytes, maxTranscriptBytes: UInt64 = TranscriptStore.defaultMaxFileBytes) -> [String: String] {
         let base = (basePath?.isEmpty == false) ? basePath! : "/usr/bin:/bin:/usr/sbin:/sbin"
         var out = [
@@ -160,57 +134,6 @@ enum PaneLauncher {
     private static func innerShellName(_ inner: String) -> String {
         guard let first = inner.split(whereSeparator: \.isWhitespace).first else { return "" }
         return URL(fileURLWithPath: String(first)).lastPathComponent
-    }
-
-    /// Inner command tokens for an SSH pane.
-    /// - Plain interactive login (`ssh <user opts…> <host>`, nothing after
-    ///   the host): forces a TTY and opens cleared — the remote side wipes
-    ///   the login burst itself, then `exec`s the login shell, so the user
-    ///   is shown a cleared terminal with a fresh prompt. Auth happens
-    ///   before any of this and is untouched; `printf` needs no remote
-    ///   terminfo entry (unlike `clear`).
-    /// - Plain mode with an explicit remote command: verbatim tokens (never
-    ///   wrapped — the user's remote command owns the line).
-    /// - Tmux mode: `ssh <user opts…> -t <host> tmux new-session -A -s <name>`
-    ///   (`-t` forces the TTY tmux needs; `-A` attaches or creates).
-    /// `selfClear` (settings) gates the plain-login wrap; off means
-    /// verbatim tokens even for bare hosts.
-    /// Returns nil when tokens aren't argv-safe, the host is missing, or a
-    /// requested tmux name is invalid (callers show the config overlay
-    /// instead of spawning a broken command).
-    static func sshInner(_ ssh: SSHCommand, tmuxSession: String?, selfClear: Bool = true) -> [String]? {
-        // Bare `host` / `user@host` launches through `ssh` (see
-        // `effectiveForLaunch`); everything below sees ssh-fronted tokens.
-        let ssh = ssh.effectiveForLaunch
-        guard ssh.argvSafe, let hostIdx = ssh.hostTokenIndex else { return nil }
-        let tokens = ssh.argvTokens
-        guard hostIdx < tokens.count else { return nil }
-        // Not ssh-like (e.g. mosh): verbatim, never wrapped.
-        guard tokens.first == "ssh" else { return tokens }
-        guard let requested = tmuxSession, !requested.isEmpty else {
-            return selfClear ? plainLogin(tokens: tokens, hostIdx: hostIdx) : tokens
-        }
-        guard let session = sanitizedTmuxName(requested) else { return nil }
-        var out: [String] = [tokens[0]]
-        out += tokens[1..<hostIdx] // user flags (ports, identity, jumps…)
-        out += ["-t", tokens[hostIdx]]
-        out += ["tmux", "new-session", "-A", "-s", session]
-        // Trailing tokens after the host (rare, e.g. a remote command) are
-        // dropped in tmux mode: the session owns the remote command line.
-        return out
-    }
-
-    /// Bare-host login opens cleared (see `sshInner`); anything carrying
-    /// its own remote command passes through verbatim.
-    static func plainLogin(tokens: [String], hostIdx: Int) -> [String] {
-        guard hostIdx == tokens.count - 1 else { return tokens }
-        var out: [String] = [tokens[0]]
-        out += tokens[1..<hostIdx] // user flags (ports, identity, jumps…)
-        out += ["-t", tokens[hostIdx]]
-        // NOTE: backslashes are doubled for Swift — the remote shell
-        // receives: printf '\033[H\033[2J\033[3J'; exec "${SHELL:-/bin/sh}" -l
-        out += ["printf", "'\\033[H\\033[2J\\033[3J';", "exec", "\"${SHELL:-/bin/sh}\"", "-l"]
-        return out
     }
 
     /// tmux session names: keep it strict so the name can't smuggle flags.

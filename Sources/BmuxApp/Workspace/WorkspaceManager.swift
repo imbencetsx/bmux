@@ -201,6 +201,12 @@ final class WorkspaceManager: ObservableObject {
 
     // MARK: - Persistence
 
+    func flush() {
+        persistTask?.cancel()
+        persistTask = nil
+        persistNow()
+    }
+
     private func persistSoon() {
         persistTask?.cancel()
         persistTask = Task { [weak self] in

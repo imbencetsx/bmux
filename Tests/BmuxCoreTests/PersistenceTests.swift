@@ -1,6 +1,33 @@
 import Foundation
 import Testing
 @testable import BmuxApp
+import BmuxSSH
+
+@Test func `reopening an SSH workspace preserves tab layout and remote pane identities`() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = WorkspaceStore(fileURL: directory.appendingPathComponent("workspaces.json"))
+    let workspace = Workspace(name: "Remote", kind: .ssh, sshCommand: "ssh -J gateway user@host", sshTmuxSession: "work")
+    var detail = WorkspaceDetail.fresh(workspaceID: workspace.id, workingDirectory: "/tmp")
+    let first = try #require(detail.tabs[0].root.panes.first?.id)
+    _ = detail.tabs[0].root.splitPane(first, direction: .sideBySide) { Pane() }
+    detail.tabs.append(Tab(root: .pane(Pane())))
+    detail.activeTabID = detail.tabs.last?.id
+    let original = detail.tabs.flatMap { $0.root.panes }.compactMap {
+        SSHCommand(raw: workspace.sshCommand!).persistentSession(paneID: $0.id, prefix: workspace.sshTmuxSession)
+    }
+    store.save(.init(workspaces: [workspace], activeID: workspace.id, details: [detail], sidebarVisible: true))
+
+    let restored = store.load()
+    let restoredWorkspace = try #require(restored.workspaces.first)
+    let restoredDetail = try #require(restored.details.first)
+    #expect(restoredDetail == detail)
+    let reopened = restoredDetail.tabs.flatMap { $0.root.panes }.compactMap {
+        SSHCommand(raw: restoredWorkspace.sshCommand!).persistentSession(paneID: $0.id, prefix: restoredWorkspace.sshTmuxSession)
+    }
+    #expect(reopened == original)
+    #expect(Set(reopened.map(\.name)).count == 3)
+}
 
 @Test func restoresLegacyV2LayoutWithoutSidebarKey() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
