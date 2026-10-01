@@ -165,6 +165,11 @@ enum MonospaceFonts {
         if !trimmed.isEmpty, let font = NSFont(name: trimmed, size: size) {
             return font
         }
+        if !trimmed.isEmpty, let font = NSFontManager.shared.font(
+            withFamily: trimmed, traits: [], weight: 5, size: size
+        ) {
+            return font
+        }
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 

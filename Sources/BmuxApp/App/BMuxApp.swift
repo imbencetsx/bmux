@@ -55,7 +55,7 @@ struct BMuxApp: App {
         // traffic lights floating over the unified, theme-matched toolbar.
         // No custom window buttons or traffic-light views are used.
         .windowStyle(.hiddenTitleBar)
-        .windowToolbarStyle(.unified)
+        .windowToolbarStyle(.unifiedCompact)
         .commands {
             SidebarCommands(
                 onNewWorkspace: { workspaces.create(name: "Untitled") },

@@ -144,6 +144,7 @@ private struct StaticTitle: View {
             HStack(spacing: 5) {
                 Image(systemName: "server.rack")
                 Text(fallback)
+                    .terminalPathFont(size: 12.5)
             }
             .font(.system(size: 12.5))
             .foregroundStyle(.secondary)
@@ -155,6 +156,7 @@ private struct StaticTitle: View {
             HStack(spacing: 5) {
                 Image(systemName: "folder")
                 Text(fallback)
+                    .terminalPathFont(size: 12.5)
             }
             .font(.system(size: 12.5))
             .foregroundStyle(.secondary)
@@ -182,6 +184,7 @@ private struct LiveTitle: View {
                     Image(systemName: "server.rack")
                         .foregroundStyle(.secondary)
                     Text(displayName)
+                        .terminalPathFont(size: 12.5)
                 }
                 .font(.system(size: 12.5))
                 .foregroundStyle(.secondary)
@@ -194,6 +197,7 @@ private struct LiveTitle: View {
                 HStack(spacing: 5) {
                     Image(systemName: "folder")
                     Text(displayName)
+                        .terminalPathFont(size: 12.5)
                 }
                 .font(.system(size: 12.5))
                 .foregroundStyle(.secondary)
@@ -237,7 +241,7 @@ private struct LiveTitle: View {
 // MARK: - Native Folder Label
 
 /// A real macOS folder in the titlebar: the Finder's icon for the exact
-/// directory, its name, click-to-reveal, path menu, file-URL drag, and
+/// directory, its full path, click-to-reveal, path menu, file-URL drag, and
 /// window proxy sync.
 private struct NativeFolderLabel: View {
     let path: String
@@ -247,21 +251,22 @@ private struct NativeFolderLabel: View {
             HStack(spacing: 5) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: path))
                     .resizable()
-                    .frame(width: 18, height: 18)
+                    .frame(width: 16, height: 16)
                     .accessibilityHidden(true)
-                Text(displayName)
+                Text(path)
+                    .terminalPathFont(size: 12.5)
             }
-            .font(.system(size: 13.5))
+            .font(.system(size: 12.5))
             .foregroundStyle(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
-            .frame(maxWidth: 340)
+            .frame(maxWidth: 600)
             .padding(.horizontal, 2)
-            .padding(.vertical, 2)
+            .padding(.vertical, 1)
         }
         .buttonStyle(.plain)
         .help(path)
-        .accessibilityLabel("Current folder: \(displayName)")
+        .accessibilityLabel("Current folder: \(path)")
         .accessibilityHint("Activates Finder on the current folder")
         .contextMenu {
             Button("Reveal in Finder") { revealInFinder() }
