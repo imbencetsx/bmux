@@ -19,14 +19,6 @@ enum PaneCommand {
         return "\(shell) -l"
     }
 
-    static func ssh(_ ssh: SSHCommand) -> String? {
-        // Same bare-host normalization as the `bmux-launch` path: without
-        // it a bare `ras-02` would be exec'd as a binary and die instantly.
-        let ssh = ssh.effectiveForLaunch
-        guard ssh.argvSafe else { return nil }
-        return ssh.argvTokens.joined(separator: " ")
-    }
-
     /// POSIX single-quote with `'\''` escaping. For text TYPED into a real
     /// shell (history replay) — never for ghostty's command line.
     static func shellQuote(_ s: String) -> String {

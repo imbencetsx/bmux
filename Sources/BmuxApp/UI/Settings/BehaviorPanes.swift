@@ -31,7 +31,7 @@ struct TerminalPane: View {
                     Text("Only if the shell lived \(Int(settings.current.relaunchAfterSeconds))s or more")
                 }
                 .disabled(!settings.current.autoRelaunch)
-                SettingNote(text: "Quick deaths show the exited overlay instead of crash-looping. SSH panes never auto-reconnect.")
+                SettingNote(text: "Quick deaths show the exited overlay instead of crash-looping. SSH connections retry automatically and keep the same remote processes.")
             }
 
             Section("History") {
@@ -177,18 +177,18 @@ struct SSHPane: View {
 
     var body: some View {
         Form {
-            Section("Fresh logins") {
-                Toggle("Open plain SSH logins cleared", isOn: $settings.current.sshSelfClear)
-                SettingNote(text: "On: the remote side wipes the login burst itself, then starts the login shell — you're shown a cleared terminal with a fresh prompt. Password prompts happen before that and are untouched. Off: plain verbatim ssh.")
-                SettingNote(text: "Reconnects never replay old transcripts either way: stale remote output above a fresh login would read as live state. Remote-tmux sessions reattach live.")
+            Section("Persistent sessions") {
+                SettingNote(text: "SSH panes use tmux 3.2+ on the remote host. Disconnecting, sleeping or quitting leaves programs running. Reopening restores tabs and splits and reconnects to the same processes.")
+                SettingNote(text: "Closing a pane, tab or workspace ends its remote sessions. If the host is offline, the close request is saved and retried when it becomes reachable. Remote machine reboots end sessions.")
+                SettingNote(text: "Shell history scrolls in the terminal just like a local pane. Interactive applications keep their own mouse and alternate-screen behavior.")
             }
 
             Section("New SSH workspaces") {
-                TextField("tmux session", text: $settings.current.sshDefaultTmux, prompt: Text("No tmux (optional)"))
+                TextField("Session name prefix", text: $settings.current.sshDefaultTmux, prompt: Text("bmux"))
                     .textFieldStyle(.roundedBorder)
                     .fontDesign(.monospaced)
                     .autocorrectionDisabled()
-                SettingNote(text: "Prefills the tmux-session field when creating SSH workspaces. Letters, numbers, underscore, hyphen.")
+                SettingNote(text: "An optional prefix for new workspaces. Every pane gets a unique session. Letters, numbers, underscore and hyphen.")
             }
         }
         .formStyle(.grouped)

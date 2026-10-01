@@ -48,7 +48,9 @@ struct TerminalOps {
     func closePane(_ paneID: UUID, in ws: Workspace, tabID: UUID) {
         guard let tab = manager.detail(for: ws.id)?.tabs.first(where: { $0.id == tabID }),
               tab.root.pane(paneID) != nil else { return }
-        hosts.retire(paneID: paneID) // first: teardown onClose must not resurrect
+        // A lone pane is closed by closeTab below, exactly once.
+        if tab.root.panes.count == 1 { closeTab(tabID, in: ws); return }
+        hosts.close(paneID: paneID, workspace: ws)
         var lastPane = false
         manager.mutateDetail(ws.id) { detail in
             guard let i = detail.tabs.firstIndex(where: { $0.id == tabID }) else { return }
@@ -67,7 +69,7 @@ struct TerminalOps {
 
     func closeTab(_ tabID: UUID, in ws: Workspace) {
         if let tab = manager.detail(for: ws.id)?.tabs.first(where: { $0.id == tabID }) {
-            for pane in tab.root.panes { hosts.retire(paneID: pane.id) }
+            for pane in tab.root.panes { hosts.close(paneID: pane.id, workspace: ws) }
         }
         manager.closeTab(tabID, in: ws.id)
         ensureHosts()

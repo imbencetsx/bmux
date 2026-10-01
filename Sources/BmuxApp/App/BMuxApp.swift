@@ -38,6 +38,9 @@ struct BMuxApp: App {
                 .environmentObject(workspaces)
                 .environmentObject(hosts)
                 .environmentObject(settings)
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                    workspaces.flush()
+                }
                 // Let the content's theme-matched backgrounds reach the
                 // window edges, including behind the native titlebar.
                 .background {

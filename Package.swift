@@ -22,6 +22,7 @@ let package = Package(
         .executableTarget(
             name: "BmuxApp",
             dependencies: [
+                "BmuxSSH",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "GhosttyTheme", package: "libghostty-spm"),
             ],
@@ -41,11 +42,13 @@ let package = Package(
         ),
         .executableTarget(
             name: "BmuxLaunch",
+            dependencies: ["BmuxSSH"],
             path: "Sources/BmuxLaunch"
         ),
+        .target(name: "BmuxSSH", path: "Sources/BmuxSSH"),
         .testTarget(
             name: "BmuxCoreTests",
-            dependencies: ["BmuxApp"],
+            dependencies: ["BmuxApp", "BmuxSSH"],
             path: "Tests/BmuxCoreTests"
         ),
     ]

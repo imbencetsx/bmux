@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import BmuxSSH
 
 // Swift marks Darwin `fork()` unavailable; we still need it for a classic
 // openpty + login_tty child. Call the libc symbol directly.
@@ -41,6 +42,14 @@ enum BmuxLaunch {
             fputs("bmux-launch: missing environment (BMUX_TS/BMUX_INNER)\n", stderr)
             sleep(2)
             exit(1)
+        }
+
+        signal(SIGPIPE, SIG_IGN)
+        if let json = env["BMUX_REMOTE_SESSION"], let data = json.data(using: .utf8),
+           let session = try? JSONDecoder().decode(RemoteSession.self, from: data) {
+            PersistentSSH.run(session: session, transcriptPath: ts,
+                              maxTranscriptBytes: UInt64(env["BMUX_TS_MAX_BYTES"] ?? "") ?? 8 * 1024 * 1024)
+            return
         }
 
         restoreOrClear(
@@ -117,7 +126,9 @@ private enum WinchMailbox {
 
 enum Recorder {
     /// Returns the child's wait-status exit code (0...255).
-    static func run(transcriptPath: String, argv0: String, argv: [String], maxTranscriptBytes: UInt64) -> Int32 {
+    static func run(transcriptPath: String, argv0: String, argv: [String], maxTranscriptBytes: UInt64,
+                    control: TmuxControl? = nil, closeRequested: @escaping () -> Bool = { false },
+                    service: @escaping (TmuxControl) -> Void = { _ in }) -> Int32 {
         // Save + raw the outer tty so every byte Ghostty sends flows through,
         // matching script(1)'s relay behaviour.
         var original = termios()
@@ -150,7 +161,11 @@ enum Recorder {
         // the outer termios, so the first paint matches Ghostty's grid.
         syncWinsize(from: STDIN_FILENO, to: master)
         if hadAttrs {
-            _ = tcsetattr(slave, TCSANOW, &original)
+            var childAttrs = original
+            // The control channel must not echo commands or turn LF into
+            // CRLF. SSH password prompts temporarily manage their own tty.
+            if control != nil { cfmakeraw(&childAttrs) }
+            _ = tcsetattr(slave, TCSANOW, &childAttrs)
         }
 
         let pid = sys_fork()
@@ -183,11 +198,8 @@ enum Recorder {
         WinchMailbox.childPID = pid
         signal(SIGWINCH, WinchMailbox.handler)
 
-        defer {
-            close(master)
-        }
-
-        let code = relay(master: master, child: pid, transcriptPath: transcriptPath, maxTranscriptBytes: maxTranscriptBytes)
+        let code = relay(master: master, child: pid, transcriptPath: transcriptPath,
+                         maxTranscriptBytes: maxTranscriptBytes, control: control, closeRequested: closeRequested, service: service)
         WinchMailbox.masterFD = -1
         WinchMailbox.childPID = -1
         return code
@@ -201,39 +213,78 @@ enum Recorder {
 
     // MARK: Relay
 
-    private static func relay(master: Int32, child: pid_t, transcriptPath: String, maxTranscriptBytes: UInt64) -> Int32 {
+    private static func relay(master: Int32, child: pid_t, transcriptPath: String,
+                              maxTranscriptBytes: UInt64, control: TmuxControl?, closeRequested: () -> Bool,
+                              service: (TmuxControl) -> Void) -> Int32 {
         var stdinOpen = true
         var masterOpen = true
         var transcript = openTranscript(transcriptPath)
+        var outgoing: [UInt8] = []
+        var outgoingOffset = 0
+        _ = fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK)
         defer { if let transcript { close(transcript) } }
+        func output(_ bytes: [UInt8]) {
+            _ = writeAll(STDOUT_FILENO, bytes, count: bytes.count)
+            if let current = transcript {
+                var info = stat()
+                if fstat(current, &info) == 0,
+                   UInt64(max(0, info.st_size)) + UInt64(bytes.count) > max(1, maxTranscriptBytes) {
+                    close(current)
+                    _ = rename(transcriptPath, transcriptPath + ".1")
+                    transcript = openTranscript(transcriptPath)
+                }
+                if let transcript { _ = writeAll(transcript, bytes, count: bytes.count) }
+            }
+        }
+        control?.emit = output
+        control?.send = { command in
+            outgoing += command.utf8
+        }
         // waitpid reaps a child only once. Keep its status while draining
         // output still buffered in the PTY after the process exits.
         var childStatus: Int32?
         var buf = [UInt8](repeating: 0, count: 16 * 1024)
+        var nextService = Date.distantPast
 
         while masterOpen {
+            if let control, control.ready, Date() >= nextService {
+                nextService = Date().addingTimeInterval(5)
+                service(control)
+            }
+            if closeRequested() {
+                if control?.ready == true { control?.closeSession() }
+                else { kill(child, SIGHUP) }
+            }
             if WinchMailbox.pending != 0 {
                 WinchMailbox.pending = 0
                 syncWinsize(from: STDIN_FILENO, to: master)
+                var size = winsize()
+                if ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0 {
+                    control?.resize(columns: Int(size.ws_col), rows: Int(size.ws_row))
+                }
                 if WinchMailbox.childPID > 0 {
                     kill(WinchMailbox.childPID, SIGWINCH)
                 }
             }
 
             var readSet = fd_set()
+            var writeSet = fd_set()
             fdZero(&readSet)
+            fdZero(&writeSet)
             var maxFD: Int32 = 0
-            if stdinOpen {
+            // Apply backpressure on large pastes without blocking output.
+            if stdinOpen, outgoing.count - outgoingOffset < 1024 * 1024 {
                 fdSet(STDIN_FILENO, &readSet)
                 maxFD = max(maxFD, STDIN_FILENO)
             }
             if masterOpen {
                 fdSet(master, &readSet)
+                if outgoingOffset < outgoing.count { fdSet(master, &writeSet) }
                 maxFD = max(maxFD, master)
             }
 
             var timeout = timeval(tv_sec: 0, tv_usec: 200_000) // 200ms — WINCH poll
-            let ready = select(maxFD + 1, &readSet, nil, nil, &timeout)
+            let ready = select(maxFD + 1, &readSet, &writeSet, nil, &timeout)
             if ready < 0 {
                 if errno == EINTR { continue }
                 break
@@ -242,33 +293,42 @@ enum Recorder {
             if stdinOpen, fdIsSet(STDIN_FILENO, &readSet) {
                 let n = read(STDIN_FILENO, &buf, buf.count)
                 if n > 0 {
-                    _ = writeAll(master, buf, count: n)
-                } else {
+                    if let control {
+                        let input = Array(buf.prefix(n))
+                        if control.started { control.input(input) }
+                        else if control.awaitsAuthenticationInput {
+                            outgoing += input
+                            control.authenticationInputWasSent(input)
+                        }
+                    } else { outgoing += buf.prefix(n) }
+                } else if n == 0 || (errno != EAGAIN && errno != EINTR) {
                     stdinOpen = false
                     _ = close(master)
                     masterOpen = false
                 }
             }
 
+            if masterOpen, fdIsSet(master, &writeSet), outgoingOffset < outgoing.count {
+                let n = outgoing.withUnsafeBytes { raw in
+                    write(master, raw.baseAddress! + outgoingOffset, min(16 * 1024, outgoing.count - outgoingOffset))
+                }
+                if n > 0 {
+                    outgoingOffset += n
+                    if outgoingOffset == outgoing.count {
+                        outgoing.removeAll(keepingCapacity: true); outgoingOffset = 0
+                    } else if outgoingOffset > 64 * 1024 {
+                        outgoing.removeFirst(outgoingOffset); outgoingOffset = 0
+                    }
+                } else if n < 0, errno != EAGAIN, errno != EINTR { masterOpen = false }
+            }
+
             if masterOpen, fdIsSet(master, &readSet) {
                 let n = read(master, &buf, buf.count)
                 if n > 0 {
-                    _ = writeAll(STDOUT_FILENO, buf, count: n)
-                    if let current = transcript {
-                        var info = stat()
-                        if fstat(current, &info) == 0,
-                           UInt64(max(0, info.st_size)) + UInt64(n) > max(1, maxTranscriptBytes)
-                        {
-                            close(current)
-                            let archive = transcriptPath + ".1"
-                            _ = rename(transcriptPath, archive)
-                            transcript = openTranscript(transcriptPath)
-                        }
-                        if let transcript {
-                            _ = writeAll(transcript, buf, count: n)
-                        }
-                    }
-                } else {
+                    if let control { control.receive(Array(buf.prefix(n))) }
+                    else { output(Array(buf.prefix(n))) }
+                    if control?.failed == true { kill(child, SIGHUP) }
+                } else if n == 0 || (errno != EAGAIN && errno != EINTR) {
                     masterOpen = false
                 }
             }
@@ -280,6 +340,8 @@ enum Recorder {
                 }
             }
         }
+
+        if stdinOpen { close(master) }
 
         if let childStatus { return exitStatus(childStatus) }
         var status: Int32 = 0
