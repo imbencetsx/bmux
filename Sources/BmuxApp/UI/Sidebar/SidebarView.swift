@@ -91,11 +91,11 @@ struct SidebarView: View {
     }
 
     private func sshSubtitle(_ ws: Workspace) -> String {
-        let base = ws.sshCommand ?? "ssh"
-        if let tmux = ws.sshTmuxSession, !tmux.isEmpty {
-            return "\(base) · tmux:\(tmux)"
+        let command = SSHCommand(raw: ws.sshCommand ?? "ssh").effectiveForLaunch
+        guard command.persistentSession(paneID: ws.id, prefix: ws.sshTmuxSession) != nil else {
+            return command.raw
         }
-        return base
+        return "\(command.raw) · tmux"
     }
 
     /// The current folder: the active tab's focused pane live directory
@@ -109,16 +109,8 @@ struct SidebarView: View {
                 let paneID = tab.focusedPaneID ?? tab.root.panes.first?.id
                 return paneID.flatMap(tab.root.pane)?.workingDirectory
             } ?? ws.workingDirectory
-        return compactPath(path)
-    }
-
-    private func compactPath(_ path: String) -> String {
-        let home = NSHomeDirectory()
-        if path == home { return "~" }
-        if path.hasPrefix(home + "/") {
-            return "~" + path.dropFirst(home.count)
-        }
-        return path
+        let folder = URL(fileURLWithPath: path).lastPathComponent
+        return folder.isEmpty ? "/" : folder
     }
 
     @ViewBuilder
