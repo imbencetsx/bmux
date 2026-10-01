@@ -20,25 +20,30 @@ struct SidebarView: View {
     @State private var sshTmux = ""
 
     var body: some View {
-        List(selection: selectionBinding) {
+        List {
             ForEach(manager.workspaces) { ws in
-                WorkspaceRow(
-                    workspace: ws,
-                    paneCount: paneCount(ws),
-                    terminalCount: manager.detail(for: ws.id)?.tabs.count ?? 0,
-                    location: workspaceLocation(ws),
-                    contrast: BmuxTheme.contrastScheme(settings: settings.applied, system: scheme)
-                )
-                .padding(.vertical, 3)
-                .listRowInsets(EdgeInsets(top: 1, leading: 0, bottom: 1, trailing: 8))
+                Button {
+                    manager.select(ws.id)
+                } label: {
+                    WorkspaceRow(
+                        workspace: ws,
+                        paneCount: paneCount(ws),
+                        terminalCount: manager.detail(for: ws.id)?.tabs.count ?? 0,
+                        location: workspaceLocation(ws),
+                        contrast: BmuxTheme.contrastScheme(settings: settings.applied, system: scheme),
+                        isSelected: manager.activeID == ws.id
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets())
                 .listRowSeparator(.hidden)
                 .listRowBackground(Color.clear)
-                .tag(ws.id)
+                .accessibilityAddTraits(manager.activeID == ws.id ? .isSelected : [])
                 .contextMenu { workspaceMenu(ws) }
             }
             .onMove { manager.move(from: $0, to: $1) }
         }
-        .listStyle(.sidebar)
+        .listStyle(.plain)
         // Sidebar is one surface with the terminal: opaque theme fill on
         // all macOS versions (no Liquid Glass passthrough).
         .modifier(SidebarSurfaceModifier(
@@ -51,17 +56,10 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: 8)
         }
-        // Trailing edge: soft hairline separating the sidebar from the
-        // terminal detail, matching the split dividers. Applied after the
-        // insets so it runs the full column height — up through the
-        // header/titlebar zone and the top-bar hairline — sitting over
-        // everything at that x.
-        .overlay(alignment: .trailing) {
-            Rectangle()
-                .fill(BmuxTheme.divider(scheme))
-                .frame(width: 1)
-                .frame(maxHeight: .infinity)
-                .ignoresSafeArea(edges: [.top, .bottom])
+        // Draw at window level so the boundary also crosses the toolbar.
+        .background {
+            SidebarWindowDivider(color: BmuxTheme.divider(scheme), visible: manager.sidebarVisible)
+                .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
         .sheet(item: $renaming) { ws in
@@ -87,16 +85,6 @@ struct SidebarView: View {
     }
 
     // MARK: - Private
-
-    /// Selection routes through `select(_:)` so activation time is stamped
-    /// and persisted — a raw `$manager.activeID` binding would switch
-    /// silently without either.
-    private var selectionBinding: Binding<UUID?> {
-        Binding(
-            get: { manager.activeID },
-            set: { if let id = $0 { manager.select(id) } }
-        )
-    }
 
     private func paneCount(_ ws: Workspace) -> Int {
         manager.detail(for: ws.id)?.tabs.reduce(0) { $0 + $1.root.panes.count } ?? 0
@@ -183,11 +171,7 @@ struct SidebarView: View {
 
 // MARK: - Showing Workspace Rows
 
-/// Native sidebar row: text-first, with a leading accent stripe for
-/// persistent workspace identity (like the reference: a thin color line on
-/// the row's leading edge). Only colored workspaces (`colorHex != nil`) get
-/// the stripe — "Default" workspaces render plain. Selection remains
-/// entirely system-owned.
+/// Full-width workspace item with a muted workspace-color selection.
 private struct WorkspaceRow: View {
     var workspace: Workspace
     var paneCount: Int
@@ -195,6 +179,7 @@ private struct WorkspaceRow: View {
     var location: String
     /// Scheme row text resolves under (detected terminal-bg brightness).
     var contrast: ColorScheme
+    var isSelected: Bool
 
     /// Painted stripe color, or nil for "Default" (slot stays empty).
     private var stripeColor: Color? {
@@ -204,13 +189,10 @@ private struct WorkspaceRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Stripe slot is always reserved so colored and default rows
-            // keep the same text alignment; only colored workspaces paint
-            // it. The row starts flush at the sidebar edge so the line
-            // sits at the very beginning (see listRowInsets below).
+            // Reserve the stripe slot so all workspace names align.
             RoundedRectangle(cornerRadius: 1.5)
                 .fill(stripeColor ?? .clear)
-                .frame(width: 3)
+                .frame(width: 3, height: 28)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
@@ -224,20 +206,29 @@ private struct WorkspaceRow: View {
                     }
                 }
                 Text(location)
-                    .font(.caption)
+                    .terminalPathFont(size: 11)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
             Spacer(minLength: 6)
             Text("\(terminalCount) · \(paneCount)")
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .accessibilityLabel("\(terminalCount) terminals, \(paneCount) panes")
         }
         .environment(\.colorScheme, contrast)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+        .background {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill((stripeColor ?? BmuxTheme.brand(contrast)).opacity(0.16))
+            }
+        }
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(workspace.name), \(location), \(terminalCount) terminals, \(paneCount) panes")
     }

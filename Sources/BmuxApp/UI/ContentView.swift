@@ -20,11 +20,11 @@ func postIntent(_ intent: BMuxIntent) {
 /// plus a plain action row and tab strip, then the
 /// terminal. No separators, no boxes. The sidebar is a real
 /// `NavigationSplitView` column (animated, resizable, persisted) with one
-/// button (New +). There is no sidebar toggle button — showing/hiding
-/// lives in the menu + shortcut only. Hosts are ensured (created) outside
+/// native sidebar toggle and New button. Hosts are ensured (created) outside
 /// View bodies; bodies only read.
 struct ContentView: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var manager: WorkspaceManager
     @EnvironmentObject private var hosts: PaneHostStore
     @EnvironmentObject private var settings: AppSettingsStore
@@ -44,6 +44,7 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: columnVisibility) {
             SidebarView()
+                .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 340)
         } detail: {
             if !manager.workspaces.isEmpty {
                 ZStack {
@@ -58,8 +59,14 @@ struct ContentView: View {
                 emptyWorkspace
             }
         }
-        .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 340)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: manager.sidebarVisible)
         .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+        .background {
+            SidebarToolbarButton(isVisible: manager.sidebarVisible) {
+                manager.toggleSidebar()
+            }
+            .frame(width: 0, height: 0)
+        }
         .toolbar {
             if #available(macOS 26, *) {
                 ToolbarItem(placement: .navigation) {
@@ -154,7 +161,10 @@ struct ContentView: View {
                         ops: ops,
                         isWorkspaceActive: isActive
                     )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .ignoresSafeArea(.container, edges: .bottom)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
             } else {
                 ContentUnavailableView(
