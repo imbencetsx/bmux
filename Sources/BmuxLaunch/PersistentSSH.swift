@@ -2,7 +2,7 @@ import BmuxSSH
 import Darwin
 import Foundation
 
-enum PersistentSSH {
+enum PersistentTmux {
     static func run(session: RemoteSession, transcriptPath: String, maxTranscriptBytes: UInt64) {
         var delay = 1
         let closeFile = ProcessInfo.processInfo.environment["BMUX_CLOSE_FILE"] ?? ""
@@ -14,10 +14,24 @@ enum PersistentSSH {
             let columns = size.ws_col > 0 ? Int(size.ws_col) : 80
             let rows = size.ws_row > 0 ? Int(size.ws_row) : 24
             let control = TmuxControl(columns: columns, rows: rows, sessionName: session.name, emit: { _ in }, send: { _ in })
+            if let path = ProcessInfo.processInfo.environment["BMUX_REMOTE_DIRECTORY_FILE"] {
+                control.onWorkingDirectory = { directory in
+                    guard let data = try? JSONEncoder().encode(directory) else { return }
+                    try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                }
+            }
+            if let path = ProcessInfo.processInfo.environment["BMUX_COMMAND_FILE"] {
+                var previous: String?
+                control.onForegroundCommand = { command in
+                    guard command != previous, let data = try? JSONEncoder().encode(command) else { return }
+                    previous = command
+                    try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+                }
+            }
             let started = Date()
             let cleanup = PendingSSHCleanup(session: session)
-            let code = Recorder.run(transcriptPath: transcriptPath, argv0: "/usr/bin/ssh",
-                                    argv: ["ssh"] + session.attachArguments(columns: columns, rows: rows),
+            let code = Recorder.run(transcriptPath: transcriptPath, argv0: session.executablePath,
+                                    argv: [session.executablePath] + session.attachArguments(columns: columns, rows: rows),
                                     maxTranscriptBytes: maxTranscriptBytes, control: control, closeRequested: closeRequested,
                                     service: cleanup.service)
             if closeRequested() {
@@ -26,16 +40,17 @@ enum PersistentSSH {
                 }
                 return
             }
-            let transportFailed = code == 255 || code >= 128
-            if control.ended || control.failed || control.authenticationFailed || !transportFailed {
-                if control.ended { print("\r\nbmux: tmux detached or the remote session ended. Use Reconnect to reattach or start a session.\r") }
+            let transportFailed = code == 255 || code >= 128 || control.needsReconnect
+            if (!control.needsReconnect && (control.ended || control.failed)) || control.authenticationFailed || !transportFailed {
+                if control.ended { print("\r\nbmux: tmux detached or the session ended. Use Reconnect to reattach or start a session.\r") }
                 // Keep diagnostics visible until the user reconnects/closes;
                 // Ghostty's exit overlay otherwise hides the useful error.
                 hold()
                 return
             }
             if control.ready, Date().timeIntervalSince(started) > 10 { delay = 1 }
-            fputs("\r\nbmux: SSH disconnected; remote session is kept. Retrying in \(delay)s…\r\n", stdout)
+            let transport = session.isLocal ? "tmux connection" : "SSH"
+            fputs("\r\nbmux: \(transport) disconnected; session is kept. Retrying in \(delay)s…\r\n", stdout)
             fflush(stdout)
             guard waitForRetry(seconds: delay) else { return }
             delay = min(30, delay * 2)
@@ -84,7 +99,7 @@ private final class PendingSSHCleanup {
         guard let path = env["BMUX_CLEANUP_FILE"], let directory = env["BMUX_CLOSE_DIRECTORY"],
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let requests = try? JSONDecoder().decode([RemoteSession].self, from: data) else { return }
-        for request in requests where request.sshArguments == session.sshArguments && request.name != session.name {
+        for request in requests where request.isLocal == session.isLocal && request.sshArguments == session.sshArguments && request.name != session.name {
             guard issued.insert(request.name).inserted else { continue }
             control.terminateSession(named: request.name) { [weak self] success in
                 if success {

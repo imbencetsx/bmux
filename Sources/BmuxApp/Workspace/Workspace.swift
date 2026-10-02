@@ -12,6 +12,9 @@ struct Workspace: Identifiable, Codable, Hashable {
     var kind: Kind
     /// Local working directory. Never used as a remote spawn directory.
     var workingDirectory: String
+    /// Opt-in for persistent local panes; absent in older workspace files.
+    var localTmux: Bool?
+    var usesTmux: Bool { kind == .ssh || localTmux == true }
     var sshCommand: String?
     /// Session-name prefix for unique per-pane remote sessions. The JSON
     /// key is retained for compatibility with older workspace files.
@@ -25,6 +28,7 @@ struct Workspace: Identifiable, Codable, Hashable {
         name: String,
         kind: Kind = .local,
         workingDirectory: String = NSHomeDirectory(),
+        localTmux: Bool = false,
         sshCommand: String? = nil,
         sshTmuxSession: String? = nil,
         iconName: String = "terminal",
@@ -35,6 +39,7 @@ struct Workspace: Identifiable, Codable, Hashable {
         self.name = name
         self.kind = kind
         self.workingDirectory = workingDirectory
+        self.localTmux = localTmux ? true : nil
         self.sshCommand = sshCommand
         self.sshTmuxSession = sshTmuxSession
         self.iconName = iconName

@@ -82,6 +82,13 @@ struct TerminalOps {
         }
     }
 
+    func selectTerminal(_ number: Int) {
+        guard let ws = manager.active, let detail = manager.detail(for: ws.id) else { return }
+        let index = number == 9 ? detail.tabs.count - 1 : number - 1
+        guard detail.tabs.indices.contains(index) else { return }
+        manager.selectTab(detail.tabs[index].id, in: ws.id)
+    }
+
     // MARK: - Menu intents
 
     func run(_ intent: BMuxIntent) {
@@ -102,6 +109,36 @@ struct TerminalOps {
             closeTab(tab.id, in: ws)
         case .reconnectPane:
             if let id = focused { hosts.respawn(workspace: ws, paneID: id, manager: manager) }
+        case .previousTab, .nextTab:
+            let current = detail.tabs.firstIndex { $0.id == tab.id } ?? 0
+            let index = wrappedSelectionIndex(current: current, offset: intent == .nextTab ? 1 : -1, count: detail.tabs.count)
+            manager.selectTab(detail.tabs[index].id, in: ws.id)
+        case .previousPane, .nextPane:
+            let panes = tab.root.panes
+            guard !panes.isEmpty else { return }
+            let current = panes.firstIndex { $0.id == focused } ?? 0
+            let index = wrappedSelectionIndex(current: current, offset: intent == .nextPane ? 1 : -1, count: panes.count)
+            focusPane(panes[index].id, in: ws.id, tabID: tab.id)
+        case .viewHistory:
+            if let id = focused { NotificationCenter.default.post(name: .bmuxPaneHistory, object: id) }
+        case .clearTerminal, .scrollTop, .scrollBottom, .zoomIn, .zoomOut, .zoomReset:
+            guard let id = focused, let view = hosts.existing(paneID: id)?.state.attachedPlatformView else { return }
+            let action: String
+            switch intent {
+            case .clearTerminal: action = "clear_screen"
+            case .scrollTop: action = "scroll_to_top"
+            case .scrollBottom: action = "scroll_to_bottom"
+            case .zoomIn: action = "increase_font_size:1"
+            case .zoomOut: action = "decrease_font_size:1"
+            default: action = "reset_font_size"
+            }
+            _ = view.performBindingAction(action)
         }
     }
+}
+
+/// Wrap tab, pane and workspace navigation in both directions.
+func wrappedSelectionIndex(current: Int, offset: Int, count: Int) -> Int {
+    guard count > 0 else { return 0 }
+    return ((current + offset) % count + count) % count
 }

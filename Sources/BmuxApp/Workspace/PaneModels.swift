@@ -41,6 +41,10 @@ struct Pane: Identifiable, Codable, Hashable {
     var title: String?
     /// Last observed working directory (local panes). Restored on relaunch.
     var workingDirectory: String?
+    /// Remote tmux cwd, kept separate so it can never become a local spawn path.
+    var remoteWorkingDirectory: String?
+    /// Foreground program name; nil while the shell is idle.
+    var runningCommand: String?
     /// Reserved: explicit per-pane command override.
     var commandOverride: String?
     var status: PaneStatus
@@ -103,7 +107,7 @@ indirect enum SplitNode: Codable, Hashable {
         case .pane: break
         case .split(let sid, let d, let r, var a, var b):
             if sid == id {
-                self = .split(id: sid, direction: d, ratio: min(0.9, max(0.1, ratio)), first: a, second: b)
+                self = .split(id: sid, direction: d, ratio: min(1, max(0, ratio)), first: a, second: b)
             } else {
                 a.setRatio(node: id, ratio); b.setRatio(node: id, ratio)
                 self = .split(id: sid, direction: d, ratio: r, first: a, second: b)

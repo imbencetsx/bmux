@@ -62,12 +62,14 @@ struct BMuxApp: App {
         .commands {
             SidebarCommands(
                 onNewWorkspace: { workspaces.create(name: "Untitled") },
+                onNewLocalTmuxWorkspace: { workspaces.create(name: "Untitled", localTmux: true) },
                 onNewSSHWorkspace: {
                     NotificationCenter.default.post(name: .bmuxNewSSH, object: nil)
                 },
                 onToggleSidebar: { workspaces.toggleSidebar() }
             )
             TerminalCommands()
+            WorkspaceCommands(manager: workspaces)
         }
         Settings {
             SettingsView()

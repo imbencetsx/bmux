@@ -61,7 +61,7 @@ final class RemoteSessionCleanup {
 
     private static func kill(_ session: RemoteSession) async -> Bool {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        process.executableURL = URL(fileURLWithPath: session.executablePath)
         process.arguments = session.cleanupArguments
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice

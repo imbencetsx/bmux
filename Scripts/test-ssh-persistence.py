@@ -16,7 +16,7 @@ def remote(command):
 def launch():
     pid,fd=pty.fork()
     if pid==0:
-        env=dict(os.environ,BMUX_TS=str(root/'transcript'),BMUX_INNER='ssh',BMUX_REMOTE_SESSION=json.dumps({'name':session_name,'sshArguments':sshargs,'remoteCommand':['/bin/sh']}),BMUX_CLOSE_FILE=str(root/'close'),BMUX_CLEANUP_FILE=str(root/'cleanup.json'),BMUX_CLOSE_DIRECTORY=str(root))
+        env=dict(os.environ,BMUX_TS=str(root/'transcript'),BMUX_REMOTE_DIRECTORY_FILE=str(root/'directory.json'),BMUX_COMMAND_FILE=str(root/'command.json'),BMUX_INNER='ssh',BMUX_REMOTE_SESSION=json.dumps({'name':session_name,'sshArguments':sshargs,'remoteCommand':['/bin/sh']}),BMUX_CLOSE_FILE=str(root/'close'),BMUX_CLEANUP_FILE=str(root/'cleanup.json'),BMUX_CLOSE_DIRECTORY=str(root))
         os.execve(str(pathlib.Path('.build/debug/bmux-launch').resolve()),['bmux-launch','fixture'],env)
     fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',24,80,0,0))
     launchers.append((pid,fd))
@@ -34,6 +34,14 @@ def read_until(fd,needle,seconds=10):
     buffers[fd]=data
     if needle not in data: raise AssertionError(f'missing {needle!r}; tail={data[-1000:]!r}')
     return data
+def wait_command(command,seconds=5):
+    end=time.monotonic()+seconds
+    while time.monotonic()<end:
+        file=root/'command.json'
+        expected=(command,) if isinstance(command,str) else command
+        if file.exists() and json.loads(file.read_text()) in expected:return
+        time.sleep(.1)
+    raise AssertionError(f'foreground command did not become {command!r}')
 def wait_remote(format,value,seconds=5):
     end=time.monotonic()+seconds
     while time.monotonic()<end:
@@ -59,7 +67,60 @@ try:
     queryargs=[str(root/'query') if x==str(root/'client') else x for x in sshargs]
     time.sleep(.2)
     assert remote('echo transport-ready')=='transport-ready'
+    if '--native-renderer' in sys.argv or '--native-btop' in sys.argv:
+        # Exercise overlapping resize round trips, not just near-zero-latency
+        # loopback. SSH still authenticates normally through this TCP proxy.
+        proxy=root/'latency-proxy.py'
+        proxy.write_text('''import socket, sys, threading, time, os
+s = socket.create_connection((sys.argv[1], int(sys.argv[2])))
+def outbound():
+    while True:
+        data = os.read(0, 65536)
+        if not data: s.shutdown(socket.SHUT_WR); return
+        s.sendall(data)
+threading.Thread(target=outbound, daemon=True).start()
+while True:
+    data = s.recv(65536)
+    if not data: break
+    time.sleep(.04)
+    os.write(1, data)
+''')
+        native=root/'native-tui.py'
+        native.write_text('''import os, tty, select, time, shutil
+tty.setraw(0)
+os.write(1, b"\\x1b[?1049h\\x1b[?25l")
+frame = 0
+paused = False
+while True:
+    if select.select([0], [], [], 0)[0]:
+        keys = os.read(0, 1024)
+        if b"p" in keys: paused = True
+        if b"r" in keys: paused = False
+    columns, rows = shutil.get_terminal_size()
+    prefix = "PAUSED" if paused else "FRAME"
+    grid = "".join("\\x1b[%d;1H%s\\x1b[K" % (row+1, ("%s-%08d row=%03d %dx%d " % (prefix, frame, row, columns, rows) + "x"*columns)[:columns-1]) for row in range(rows))
+    os.write(1, ("\\x1b]2;frame-%d\\x07\\x1b[?2026h" % frame + grid + "\\x1b[?2026l").encode())
+    if not paused: frame += 1
+    time.sleep(.01)
+''')
+        nativeargs=queryargs[:-1]+['-o',f'ProxyCommand=/usr/bin/python3 {proxy} %h %p',queryargs[-1]]
+        fixture={'root':str(root),'sshArguments':nativeargs,'command':str(native)}
+        if '--native-btop' in sys.argv:
+            fixture['remoteCommand']=['btop']
+            if '--host' in sys.argv: fixture['sshArguments']=[sys.argv[sys.argv.index('--host')+1]]
+        env=dict(os.environ,BMUX_TEST_NATIVE_FIXTURE=json.dumps(fixture))
+        subprocess.run(['swift','test','--filter','native unfocused'],env=env,check=True,timeout=90)
+        sys.exit(0)
     pid,fd=launch();read_until(fd,b'\x1b[3J')
+    folder=root/'folder with spaces'
+    folder.mkdir()
+    os.write(fd,f"cd '{folder}'\r".encode())
+    end=time.monotonic()+5
+    while time.monotonic()<end:
+        metadata=root/'directory.json'
+        if metadata.exists() and json.loads(metadata.read_text())==str(folder.resolve()):break
+        time.sleep(.1)
+    else:raise AssertionError('remote directory metadata did not follow cd')
     shell_pid=remote(f"tmux -L bmux-v1 display-message -p -t '={session_name}:' '#{{pane_pid}}'")
     os.write(fd,b"for i in $(seq 1 100); do printf 'line-%s\\n' \"$i\"; done\r")
     read_until(fd,b'line-100\r\n')
@@ -80,6 +141,7 @@ try:
     os.write(fd,f'vim -u NONE -i NONE {root}/vim.txt\r'.encode())
     wait_remote('#{alternate_on}','1')
     read_until(fd,b'vim-persistence-fixture')
+    wait_command('vim')
     fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',31,105,0,0));os.kill(pid,signal.SIGWINCH)
     wait_remote('#{pane_width},#{pane_height}','105,31')
     # Closing outer PTY simulates quitting bmux. Reopening gets same shell/vim.
@@ -89,6 +151,36 @@ try:
     wait_remote('#{alternate_on}','1')
     assert remote(f"tmux -L bmux-v1 display-message -p -t '={session_name}:' '#{{pane_pid}}'")==shell_pid
     os.write(fd,b'\x1b:q!\r');wait_remote('#{alternate_on}','0')
+    wait_command(('sh','bash'))
+    # A busy TUI keeps running while an unfocused/occluded pane stops
+    # draining its PTY. Fill the relay's bounded queue, resize without input,
+    # then resume reading and verify that input and fresh output recover.
+    (root/'stress.py').write_text('''import os, sys, tty, select, time, shutil
+tty.setraw(0)
+os.write(1, b"\\x1b[?1049h\\x1b[?25l")
+frame = 0
+while True:
+    if select.select([0], [], [], 0)[0] and b"q" in os.read(0, 1024):
+        break
+    columns, rows = shutil.get_terminal_size()
+    line = ("FRAME-%08d " % frame + "x" * columns)[:max(1, columns - 1)]
+    grid = "".join("\\x1b[%d;1H%s" % (row + 1, line) for row in range(rows))
+    os.write(1, ("\\x1b[?2026h" + grid + "\\x1b[?2026l").encode())
+    frame += 1
+    time.sleep(.005)
+os.write(1, b"\\x1b[?2026l\\x1b[?25h\\x1b[?1049l\\r\\nstress-complete\\r\\n")
+''')
+    os.write(fd,f'python3 -u {root}/stress.py\r'.encode())
+    read_until(fd,b'FRAME-')
+    time.sleep(5)  # Deliberately do not consume terminal output.
+    fcntl.ioctl(fd,termios.TIOCSWINSZ,struct.pack('HHHH',28,90,0,0));os.kill(pid,signal.SIGWINCH)
+    time.sleep(.2)
+    buffers[fd]=b''
+    read_until(fd,b'FRAME-',seconds=15)
+    wait_remote('#{pane_width},#{pane_height}','90,28')
+    os.write(fd,b'q')
+    read_until(fd,b'stress-complete\r\n',seconds=15)
+    wait_remote('#{alternate_on}','0')
     # A saved close request uses this authenticated connection, so it also
     # works on password-only hosts where BatchMode cleanup cannot log in.
     obsolete='obsolete-'+str(uuid.uuid4())
@@ -104,7 +196,7 @@ try:
     while not (root/'close.done').exists() and time.monotonic()<end:time.sleep(.1)
     assert (root/'close.done').exists(),'close was not acknowledged'
     assert remote(f"tmux -L bmux-v1 has-session -t '={session_name}' 2>/dev/null; echo $?")=='1'
-    print(('Encrypted-key authentication: ' if encrypted else '')+'PASS: real SSH + bmux-launch; automatic reconnect; same remote PID; vim restore; 105x31 resize; quit/reopen; queued sibling cleanup; explicit remote close')
+    print(('Encrypted-key authentication: ' if encrypted else '')+'PASS: real SSH + bmux-launch; automatic reconnect; same remote PID; remote cwd and command tracking; vim restore; resize; quit/reopen; stalled TUI reader recovery; queued sibling cleanup; explicit remote close')
 finally:
     for pid,fd in launchers:
         try:os.close(fd)

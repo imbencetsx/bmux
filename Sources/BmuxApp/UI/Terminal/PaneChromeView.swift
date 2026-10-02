@@ -49,7 +49,7 @@ struct PaneChromeView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .bottomTrailing) {
             Group {
                 if let host, sshIssue == nil, pane.status == .connected {
                     LivePaneContent(host: host, visible: visible, autoFocus: isFocused, onFocus: onFocus)
@@ -77,7 +77,7 @@ struct PaneChromeView: View {
                     Button("Split Down") { onSplit(.stacked) }
                     Divider()
                     Button("View History") { showingHistory = true }
-                    if (workspace.kind == .ssh || pane.status != .connected), sshIssue == nil {
+                    if (workspace.usesTmux || pane.status != .connected), sshIssue == nil {
                         Button("Reconnect") { onReconnect() }
                     }
                     Divider()
@@ -85,10 +85,9 @@ struct PaneChromeView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(BmuxTheme.muted(contrast))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .bmuxGlassChip()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -106,6 +105,9 @@ struct PaneChromeView: View {
         .onAppear { syncVisibility() }
         .onChange(of: visible) { _, _ in syncVisibility() }
         .onChange(of: host != nil) { _, _ in syncVisibility() }
+        .onReceive(NotificationCenter.default.publisher(for: .bmuxPaneHistory)) { note in
+            if visible, note.object as? UUID == pane.id { showingHistory = true }
+        }
         .sheet(isPresented: $showingHistory) {
             HistorySheet(pane: pane, host: host)
         }
@@ -160,7 +162,7 @@ struct PaneChromeView: View {
             BmuxGlassGroup(spacing: 8) {
                 HStack(spacing: 8) {
                     if sshIssue == nil, pane.status != .connected {
-                        Button(workspace.kind == .ssh ? "Reconnect" : "Relaunch") { onReconnect() }
+                        Button(workspace.usesTmux ? "Reconnect" : "Relaunch") { onReconnect() }
                             .bmuxGlassButton(prominent: true)
                             .tint(BmuxTheme.brand(contrast))
                             .keyboardShortcut(.defaultAction)
@@ -181,7 +183,8 @@ struct PaneChromeView: View {
         case .unsupportedCommand: return "Persistent sessions need SSH"
         case .badTmuxName: return "Invalid tmux session name"
         case nil:
-            return workspace.kind == .ssh ? "SSH disconnected" : "Shell exited"
+            if workspace.kind == .ssh { return "SSH disconnected" }
+            return workspace.usesTmux ? "Tmux disconnected" : "Shell exited"
         }
     }
 
@@ -205,7 +208,7 @@ struct PaneChromeView: View {
             case .connected: return ""
             case .disconnected(let code, let at):
                 let when = at.formatted(date: .abbreviated, time: .shortened)
-                if workspace.kind == .ssh {
+                if workspace.usesTmux {
                     return "The connection dropped. Layout, transcripts and settings are kept — reconnect when ready."
                 }
                 return "Exited with code \(code.map(String.init) ?? "?") at \(when). Transcripts are kept."

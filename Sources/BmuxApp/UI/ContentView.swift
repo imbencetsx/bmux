@@ -4,9 +4,13 @@ import SwiftUI
 /// against the active workspace/tab/focused pane.
 enum BMuxIntent: String {
     case splitRight, splitDown, closePane, newTab, closeTab, reconnectPane
+    case previousTab, nextTab, previousPane, nextPane, viewHistory
+    case clearTerminal, scrollTop, scrollBottom, zoomIn, zoomOut, zoomReset
 }
 
 extension Notification.Name {
+    static let bmuxTerminalNumber = Notification.Name("dev.bmux.terminal-number")
+    static let bmuxPaneHistory = Notification.Name("dev.bmux.pane-history")
     static let bmuxIntent = Notification.Name("dev.bmux.intent")
 }
 
@@ -14,11 +18,15 @@ func postIntent(_ intent: BMuxIntent) {
     NotificationCenter.default.post(name: .bmuxIntent, object: intent.rawValue)
 }
 
+func postTerminalNumber(_ number: Int) {
+    NotificationCenter.default.post(name: .bmuxTerminalNumber, object: number)
+}
+
 /// Main window: Ghostty-clean terminal-first shell with a native sidebar.
 ///
 /// The window is one surface — a native toolbar (live folder centered)
-/// plus a plain action row and tab strip, then the
-/// terminal. No separators, no boxes. The sidebar is a real
+/// above the full-height terminal, with hover-only actions and tabs.
+/// No separators, no boxes. The sidebar is a real
 /// `NavigationSplitView` column (animated, resizable, persisted) with one
 /// native sidebar toggle and New button. Hosts are ensured (created) outside
 /// View bodies; bodies only read.
@@ -28,6 +36,7 @@ struct ContentView: View {
     @EnvironmentObject private var manager: WorkspaceManager
     @EnvironmentObject private var hosts: PaneHostStore
     @EnvironmentObject private var settings: AppSettingsStore
+    @State private var chromeHoveredWorkspaceID: UUID?
 
     private var ops: TerminalOps {
         TerminalOps(manager: manager, hosts: hosts)
@@ -37,7 +46,14 @@ struct ContentView: View {
     private var columnVisibility: Binding<NavigationSplitViewVisibility> {
         Binding(
             get: { manager.sidebarVisible ? .all : .detailOnly },
-            set: { manager.setSidebarVisible($0 != .detailOnly) }
+            set: { visibility in
+                switch visibility {
+                case .all, .doubleColumn: manager.setSidebarVisible(true)
+                case .detailOnly: manager.setSidebarVisible(false)
+                case .automatic: break // A layout policy is not a visibility request.
+                default: break
+                }
+            }
         )
     }
 
@@ -45,6 +61,7 @@ struct ContentView: View {
         NavigationSplitView(columnVisibility: columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 210, ideal: 248, max: 340)
+                .toolbar(removing: .sidebarToggle)
         } detail: {
             if !manager.workspaces.isEmpty {
                 ZStack {
@@ -59,15 +76,23 @@ struct ContentView: View {
                 emptyWorkspace
             }
         }
+        .focusedSceneValue(\.terminalWindowActive, true)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: manager.sidebarVisible)
         .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
-        .background {
-            SidebarToolbarButton(isVisible: manager.sidebarVisible) {
-                manager.toggleSidebar()
-            }
-            .frame(width: 0, height: 0)
-        }
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
+            if !manager.sidebarVisible {
+                if #available(macOS 26, *) {
+                    ToolbarItem(placement: .navigation) {
+                        SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .navigation) {
+                        SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
+                    }
+                }
+            }
             if #available(macOS 26, *) {
                 ToolbarItem(placement: .navigation) {
                     newWorkspaceMenu
@@ -106,6 +131,9 @@ struct ContentView: View {
             guard let raw = note.object as? String, let intent = BMuxIntent(rawValue: raw) else { return }
             ops.run(intent)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .bmuxTerminalNumber)) { note in
+            if let number = note.object as? Int { ops.selectTerminal(number) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .bmuxApplyWindowSize)) { _ in
             applyWindowSize()
         }
@@ -118,6 +146,9 @@ struct ContentView: View {
             Button("New local workspace") {
                 manager.create(name: "Untitled")
             }
+            Button("New local tmux workspace") {
+                manager.create(name: "Untitled", localTmux: true)
+            }
             Button("New SSH workspace") {
                 NotificationCenter.default.post(name: .bmuxNewSSH, object: nil)
             }
@@ -125,8 +156,8 @@ struct ContentView: View {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24)
-                .contentShape(Circle())
+                .frame(width: 32, height: 28)
+                .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -144,27 +175,40 @@ struct ContentView: View {
         )
     }
 
-    /// One surface, top to bottom: native titlebar (live folder), one
-    /// control row (terminal switcher centered across the full detail
-    /// width, glass actions floating trailing over it), then the terminal
-    /// content. The actions are an overlay — not an `HStack` sibling —
-    /// because two greedy children would split the row 50/50 and push the
-    /// pill off-center.
+    /// Full-height terminal with the centered tab switcher and trailing
+    /// actions overlaid in its top hover region. Hover changes opacity only,
+    /// so terminal dimensions remain stable while the controls are used.
     private func workspaceDetail(_ ws: Workspace, isActive: Bool) -> some View {
         Group {
             if let detail = manager.detail(for: ws.id), detail.activeTab != nil {
-                VStack(spacing: 0) {
-                    controlRow(ws: ws, detail: detail)
-                    TerminalTabsView(
-                        workspace: ws,
-                        detail: detail,
-                        ops: ops,
-                        isWorkspaceActive: isActive
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .ignoresSafeArea(.container, edges: .bottom)
-                }
+                TerminalTabsView(
+                    workspace: ws,
+                    detail: detail,
+                    ops: ops,
+                    isWorkspaceActive: isActive
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .bottom)
+                .overlay(alignment: .top) {
+                    controlRow(ws: ws, detail: detail)
+                        .opacity(chromeHoveredWorkspaceID == ws.id && isActive ? 1 : 0)
+                        .allowsHitTesting(chromeHoveredWorkspaceID == ws.id && isActive)
+                        .accessibilityHidden(chromeHoveredWorkspaceID != ws.id || !isActive)
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: chromeHoveredWorkspaceID)
+                }
+                .onContinuousHover { phase in
+                    guard isActive else { return }
+                    switch phase {
+                    case .active(let location):
+                        if location.y >= 0 && location.y <= 48 {
+                            chromeHoveredWorkspaceID = ws.id
+                        } else if chromeHoveredWorkspaceID == ws.id {
+                            chromeHoveredWorkspaceID = nil
+                        }
+                    case .ended:
+                        if chromeHoveredWorkspaceID == ws.id { chromeHoveredWorkspaceID = nil }
+                    }
+                }
                 .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
             } else {
                 ContentUnavailableView(
@@ -188,10 +232,8 @@ struct ContentView: View {
         .navigationTitle(ws.name)
     }
 
-    /// The control row: terminal switcher centered across the full detail
-    /// width with the glass actions floating trailing over it. With a
-    /// single terminal and the switcher hidden, the actions still hug the
-    /// trailing edge on their own.
+    /// Hover overlay: the controls retain their positions without reserving
+    /// terminal rows or resizing the PTY when they appear and disappear.
     @ViewBuilder
     private func controlRow(ws: Workspace, detail: WorkspaceDetail) -> some View {
         let actions = TerminalTopBar(

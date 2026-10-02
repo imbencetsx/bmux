@@ -1,6 +1,7 @@
 import AppKit
 import GhosttyTerminal
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Showing the Transparent Top Bar
 
@@ -82,7 +83,7 @@ struct TerminalTopBar: View {
 /// the highest row in the window. Local panes show the real Finder folder
 /// icon for the live directory plus its name: click reveals it in Finder,
 /// right-click offers Reveal / Copy Path, and it drags out as a real file
-/// URL. SSH panes show a server icon plus the host. Follows `cd` and
+/// URL. SSH panes show a folder button and their remote directory (host while connecting). Follows `cd` and
 /// remote titles in real time through the engine state (`@ObservedObject`);
 /// static fallbacks while spawning. Ghostty-quiet 12.5pt secondary text.
 ///
@@ -114,8 +115,9 @@ struct TitlebarStatus: View {
         } else {
             StaticTitle(
                 workspace: workspace,
-                path: pane?.workingDirectory,
-                fallback: fallbackName
+                path: workspace.kind == .ssh ? pane?.remoteWorkingDirectory : pane?.workingDirectory,
+                fallback: fallbackName,
+                command: pane?.runningCommand
             )
         }
     }
@@ -138,25 +140,23 @@ private struct StaticTitle: View {
     let workspace: Workspace
     let path: String?
     let fallback: String
+    let command: String?
 
     var body: some View {
+        folder
+    }
+
+    @ViewBuilder
+    private var folder: some View {
         if workspace.kind == .ssh {
-            HStack(spacing: 5) {
-                Image(systemName: "server.rack")
-                Text(fallback)
-                    .terminalPathFont(size: 12.5)
-            }
-            .font(.system(size: 12.5))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+            SSHFolderLabel(host: fallback, path: path, command: workspace.sshCommand ?? "ssh " + fallback, label: command.map { "[" + $0 + "]" })
         } else if let path, !path.isEmpty {
-            NativeFolderLabel(path: path)
+            NativeFolderLabel(path: path, label: command.map { "[" + $0 + "]" })
                 .onAppear { syncWindowChrome(title: shortName(path), path: path) }
         } else {
             HStack(spacing: 5) {
                 Image(systemName: "folder")
-                Text(fallback)
-                    .terminalPathFont(size: 12.5)
+                Text(command.map { "[" + $0 + "]" } ?? fallback).terminalPathFont(size: 12.5)
             }
             .font(.system(size: 12.5))
             .foregroundStyle(.secondary)
@@ -178,38 +178,33 @@ private struct LiveTitle: View {
     @ObservedObject var state: TerminalViewState
 
     var body: some View {
-        Group {
-            if workspace.kind == .ssh {
-                HStack(spacing: 5) {
-                    Image(systemName: "server.rack")
-                        .foregroundStyle(.secondary)
-                    Text(displayName)
-                        .terminalPathFont(size: 12.5)
-                }
-                .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .help(workspace.sshCommand ?? "SSH")
-                .accessibilityLabel("Current host: \(displayName)")
-            } else if let path = currentPath, !path.isEmpty {
-                NativeFolderLabel(path: path)
-            } else {
-                HStack(spacing: 5) {
-                    Image(systemName: "folder")
-                    Text(displayName)
-                        .terminalPathFont(size: 12.5)
-                }
-                .font(.system(size: 12.5))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-        }
+        folder
         .onAppear { syncChrome() }
         .onChange(of: currentPath) { _, _ in syncChrome() }
         .onChange(of: displayName) { _, _ in syncChrome() }
+        .onChange(of: pane?.runningCommand) { _, _ in syncChrome() }
+    }
+
+    @ViewBuilder
+    private var folder: some View {
+        if workspace.kind == .ssh {
+            SSHFolderLabel(host: displayName, path: currentPath, command: workspace.sshCommand ?? "ssh " + displayName, label: pane?.runningCommand.map { "[" + $0 + "]" })
+        } else if let path = currentPath, !path.isEmpty {
+            NativeFolderLabel(path: path, label: pane?.runningCommand.map { "[" + $0 + "]" })
+        } else {
+            HStack(spacing: 5) {
+                Image(systemName: "folder")
+                Text(pane?.runningCommand.map { "[" + $0 + "]" } ?? displayName)
+                    .terminalPathFont(size: 12.5)
+            }
+            .font(.system(size: 12.5))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
     }
 
     private var currentPath: String? {
+        if workspace.kind == .ssh { return pane?.remoteWorkingDirectory }
         if let dir = state.workingDirectory, !dir.isEmpty { return dir }
         return pane?.workingDirectory
     }
@@ -230,6 +225,10 @@ private struct LiveTitle: View {
     }
 
     private func syncChrome() {
+        if let command = pane?.runningCommand {
+            syncWindowChrome(title: command, path: nil)
+            return
+        }
         guard workspace.kind == .local else {
             syncWindowChrome(title: displayName, path: nil)
             return
@@ -240,11 +239,57 @@ private struct LiveTitle: View {
 
 // MARK: - Native Folder Label
 
+private struct SSHFolderLabel: View {
+    let host: String
+    let path: String?
+    let command: String
+    var label: String? = nil
+
+    var body: some View {
+        Button(action: copyLocation) {
+            HStack(spacing: 5) {
+                Image(nsImage: NSWorkspace.shared.icon(for: .folder))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+                Text(label ?? path ?? host)
+                    .terminalPathFont(size: 12.5)
+            }
+            .font(.system(size: 12.5))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: 600)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 1)
+        }
+        .buttonStyle(.plain)
+        .help(path.map { host + ":" + $0 } ?? command)
+        .accessibilityLabel(path.map { "Remote folder on \(host): \($0)" } ?? "SSH workspace: \(host)")
+        .accessibilityHint(path == nil ? "Copies the SSH command" : "Copies the remote folder path")
+        .contextMenu {
+            if let path {
+                Button("Copy Full Path") { copy(path) }
+            }
+            Button("Copy SSH Command", action: copyCommand)
+        }
+    }
+
+    private func copyLocation() { copy(path ?? command) }
+    private func copyCommand() { copy(command) }
+
+    private func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+    }
+}
+
 /// A real macOS folder in the titlebar: the Finder's icon for the exact
 /// directory, its full path, click-to-reveal, path menu, file-URL drag, and
 /// window proxy sync.
 private struct NativeFolderLabel: View {
     let path: String
+    var label: String? = nil
 
     var body: some View {
         Button(action: revealInFinder) {
@@ -253,7 +298,7 @@ private struct NativeFolderLabel: View {
                     .resizable()
                     .frame(width: 16, height: 16)
                     .accessibilityHidden(true)
-                Text(path)
+                Text(label ?? path)
                     .terminalPathFont(size: 12.5)
             }
             .font(.system(size: 12.5))
@@ -273,9 +318,9 @@ private struct NativeFolderLabel: View {
             Button("Copy Full Path") { copyPath() }
         }
         .draggable(url)
-        .onAppear { syncWindowChrome(title: displayName, path: path) }
+        .onAppear { syncWindowChrome(title: label ?? displayName, path: path) }
         .onChange(of: path) { _, new in
-            syncWindowChrome(title: shortName(new), path: new)
+            syncWindowChrome(title: label ?? shortName(new), path: new)
         }
     }
 

@@ -47,7 +47,7 @@ enum BmuxLaunch {
         signal(SIGPIPE, SIG_IGN)
         if let json = env["BMUX_REMOTE_SESSION"], let data = json.data(using: .utf8),
            let session = try? JSONDecoder().decode(RemoteSession.self, from: data) {
-            PersistentSSH.run(session: session, transcriptPath: ts,
+            PersistentTmux.run(session: session, transcriptPath: ts,
                               maxTranscriptBytes: UInt64(env["BMUX_TS_MAX_BYTES"] ?? "") ?? 8 * 1024 * 1024)
             return
         }
@@ -205,6 +205,33 @@ enum Recorder {
         return code
     }
 
+    /// Read the foreground job directly, including programs which never set
+    /// a terminal title. Script runtimes use their script's name when available.
+    private static func processCommand(_ pid: pid_t) -> String {
+        var name = [CChar](repeating: 0, count: 1024)
+        guard proc_name(pid, &name, UInt32(name.count)) > 0 else { return "" }
+        let command = String(decoding: name.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        guard ["node", "bun", "python", "python3", "ruby", "perl"].contains(command) else { return command }
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var bytes = [UInt8](repeating: 0, count: 64 * 1024)
+        var count = bytes.count
+        guard sysctl(&mib, UInt32(mib.count), &bytes, &count, nil, 0) == 0, count > 4 else { return command }
+        let argc = bytes.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+        var cursor = 4
+        while cursor < count, bytes[cursor] != 0 { cursor += 1 } // executable path
+        while cursor < count, bytes[cursor] == 0 { cursor += 1 }
+        var args: [String] = []
+        for _ in 0..<max(0, min(Int(argc), 128)) {
+            let start = cursor
+            while cursor < count, bytes[cursor] != 0 { cursor += 1 }
+            args.append(String(decoding: bytes[start..<cursor], as: UTF8.self))
+            if cursor >= count { break }
+            cursor += 1
+        }
+        guard args.count > 1, !args[1].hasPrefix("-") else { return command }
+        return URL(fileURLWithPath: args[1]).deletingPathExtension().lastPathComponent
+    }
+
     private static func resetOuterTerminalModes() {
         let reset = "\u{1B}[?1000l\u{1B}[?1002l\u{1B}[?1003l\u{1B}[?1006l\u{1B}[?1004l\u{1B}[?1049l\u{1B}[0m"
         let bytes = Array(reset.utf8)
@@ -221,10 +248,24 @@ enum Recorder {
         var transcript = openTranscript(transcriptPath)
         var outgoing: [UInt8] = []
         var outgoingOffset = 0
+        var display: [UInt8] = []
+        var displayOffset = 0
+        let originalOutputFlags = fcntl(STDOUT_FILENO, F_GETFL)
+        guard originalOutputFlags >= 0,
+              fcntl(STDOUT_FILENO, F_SETFL, originalOutputFlags | O_NONBLOCK) == 0 else {
+            close(master)
+            var status: Int32 = 0
+            _ = waitpid(child, &status, 0)
+            return 1
+        }
+        defer { _ = fcntl(STDOUT_FILENO, F_SETFL, originalOutputFlags) }
         _ = fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK)
         defer { if let transcript { close(transcript) } }
         func output(_ bytes: [UInt8]) {
-            _ = writeAll(STDOUT_FILENO, bytes, count: bytes.count)
+            guard !bytes.isEmpty else { return }
+            // Never block the SSH/control reader on Ghostty. Inactive
+            // surfaces can temporarily stop draining their outer PTY.
+            display += bytes
             if let current = transcript {
                 var info = stat()
                 if fstat(current, &info) == 0,
@@ -245,8 +286,28 @@ enum Recorder {
         var childStatus: Int32?
         var buf = [UInt8](repeating: 0, count: 16 * 1024)
         var nextService = Date.distantPast
+        let resizeClock = ContinuousClock()
+        var nextSizeCheck = resizeClock.now
+        let commandFile = ProcessInfo.processInfo.environment["BMUX_COMMAND_FILE"].map { URL(fileURLWithPath: $0) }
+        var nextCommandCheck = resizeClock.now
+        var previousCommand: String?
+        var lastColumns: UInt16 = 0
+        var lastRows: UInt16 = 0
 
-        while masterOpen {
+        while masterOpen || displayOffset < display.count {
+            if control == nil, masterOpen, let commandFile, resizeClock.now >= nextCommandCheck {
+                nextCommandCheck = resizeClock.now.advanced(by: .milliseconds(500))
+                let foreground = tcgetpgrp(master)
+                let command = foreground > 0 && foreground != child ? processCommand(foreground) : ""
+                if command != previousCommand, let data = try? JSONEncoder().encode(command) {
+                    previousCommand = command
+                    try? data.write(to: commandFile, options: .atomic)
+                }
+            }
+            if display.count - displayOffset < 1024 * 1024 {
+                control?.checkHealth()
+                if control?.failed == true { kill(child, SIGHUP) }
+            }
             if let control, control.ready, Date() >= nextService {
                 nextService = Date().addingTimeInterval(5)
                 service(control)
@@ -255,15 +316,19 @@ enum Recorder {
                 if control?.ready == true { control?.closeSession() }
                 else { kill(child, SIGHUP) }
             }
-            if WinchMailbox.pending != 0 {
+            // SIGWINCH can coalesce during a drag or arrive before the
+            // handler is installed. Poll SSH's outer grid as well so an
+            // unfocused pane always receives the final size without input.
+            if WinchMailbox.pending != 0 || (control != nil && resizeClock.now >= nextSizeCheck) {
                 WinchMailbox.pending = 0
-                syncWinsize(from: STDIN_FILENO, to: master)
+                nextSizeCheck = resizeClock.now.advanced(by: .milliseconds(200))
                 var size = winsize()
-                if ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0 {
+                if ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0, size.ws_col > 0, size.ws_row > 0,
+                   size.ws_col != lastColumns || size.ws_row != lastRows {
+                    lastColumns = size.ws_col; lastRows = size.ws_row
+                    _ = ioctl(master, TIOCSWINSZ, &size)
                     control?.resize(columns: Int(size.ws_col), rows: Int(size.ws_row))
-                }
-                if WinchMailbox.childPID > 0 {
-                    kill(WinchMailbox.childPID, SIGWINCH)
+                    if WinchMailbox.childPID > 0 { kill(WinchMailbox.childPID, SIGWINCH) }
                 }
             }
 
@@ -278,9 +343,16 @@ enum Recorder {
                 maxFD = max(maxFD, STDIN_FILENO)
             }
             if masterOpen {
-                fdSet(master, &readSet)
+                // Bound output memory without dropping application bytes.
+                // tmux's pause-after mode keeps the remote process running
+                // and supplies a fresh screen when the reader catches up.
+                if display.count - displayOffset < 1024 * 1024 { fdSet(master, &readSet) }
                 if outgoingOffset < outgoing.count { fdSet(master, &writeSet) }
                 maxFD = max(maxFD, master)
+            }
+            if displayOffset < display.count {
+                fdSet(STDOUT_FILENO, &writeSet)
+                maxFD = max(maxFD, STDOUT_FILENO)
             }
 
             var timeout = timeval(tv_sec: 0, tv_usec: 200_000) // 200ms — WINCH poll
@@ -288,6 +360,20 @@ enum Recorder {
             if ready < 0 {
                 if errno == EINTR { continue }
                 break
+            }
+
+            if fdIsSet(STDOUT_FILENO, &writeSet), displayOffset < display.count {
+                let n = display.withUnsafeBytes { raw in
+                    write(STDOUT_FILENO, raw.baseAddress! + displayOffset, min(16 * 1024, display.count - displayOffset))
+                }
+                if n > 0 {
+                    displayOffset += n
+                    if displayOffset == display.count {
+                        display.removeAll(keepingCapacity: true); displayOffset = 0
+                    } else if displayOffset > 64 * 1024 {
+                        display.removeFirst(displayOffset); displayOffset = 0
+                    }
+                } else if n < 0, errno != EAGAIN, errno != EINTR { break }
             }
 
             if stdinOpen, fdIsSet(STDIN_FILENO, &readSet) {

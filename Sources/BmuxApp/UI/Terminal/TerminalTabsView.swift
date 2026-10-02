@@ -91,10 +91,9 @@ struct TerminalTabStrip: View {
     private func segment(_ tab: Tab, index: Int) -> some View {
         let selected = tab.id == activeID
         let title = terminalTabTitle(tab, index: index)
-        // Sibling buttons, never nested: the select button owns the label,
-        // the × joins the layout only while shown so resting labels stay
-        // centered.
-        return HStack(spacing: 4) {
+        // The select button owns the entire segment, including its padding.
+        // The separate close button overlays its reserved trailing space.
+        return ZStack(alignment: .trailing) {
             Button {
                 manager.selectTab(tab.id, in: workspace.id)
             } label: {
@@ -108,6 +107,11 @@ struct TerminalTabStrip: View {
                         .lineLimit(1)
                 }
                 .foregroundStyle(.primary)
+                .padding(.trailing, showsClose(for: tab) ? 24 : 0)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(minHeight: 28)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(selected ? .isSelected : [])
@@ -119,18 +123,17 @@ struct TerminalTabStrip: View {
                 Button { close(tab) } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
-                        .frame(width: 16, height: 16)
+                        .frame(width: 24, height: 28)
                         .contentShape(Rectangle())
                         .foregroundStyle(.primary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Close Terminal \(index + 1), \(title)")
                 .help("Close terminal")
+                .padding(.trailing, 4)
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
         .background {
             if selected {
                 if #available(macOS 26, *) {
@@ -234,11 +237,19 @@ struct TerminalTabsView: View {
 
 // MARK: - Shared Tab Labels
 
-/// Numbered titles shared by the strip (and anywhere else a terminal needs
-/// a short name): custom titles win, otherwise "Terminal N" with the pane
-/// count appended when split.
+/// Follow the focused pane's foreground program; idle tabs stay numbered.
 func terminalTabTitle(_ tab: Tab, index: Int) -> String {
-    String(index + 1)
+    let pane = tab.focusedPaneID.flatMap(tab.root.pane) ?? tab.root.panes.first
+    return pane?.runningCommand.map { "[" + $0 + "]" } ?? String(index + 1)
+}
+
+/// Shells represent the idle prompt rather than a running application.
+func foregroundCommandName(_ command: String) -> String? {
+    let name = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        .split(separator: "/").last.map(String.init) ?? ""
+    let shells: Set<String> = ["sh", "bash", "zsh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh"]
+    let normalized = name.hasPrefix("-") ? String(name.dropFirst()) : name
+    return normalized.isEmpty || shells.contains(normalized) ? nil : normalized
 }
 
 /// Per-workspace tab glyph: server rack for SSH, terminal for local.

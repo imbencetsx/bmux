@@ -37,7 +37,7 @@ struct SplitContainerView: View {
     let hostFor: (UUID) -> PaneHost?
 
     var body: some View {
-        SplitSlotsView(node: node, onRatio: onRatio, onDragActivity: setDragResizeThrottle)
+        SplitSlotsView(node: node, onRatio: onRatio, onDragActivity: setDragResizeThrottle, gridFor: gridFor)
             .backgroundPreferenceValue(PaneBoundsKey.self) { prefs in
                 GeometryReader { geo in
                     ZStack(alignment: .topLeading) {
@@ -74,6 +74,16 @@ struct SplitContainerView: View {
             }
     }
 
+    private func gridFor(_ paneID: UUID, _ direction: SplitDirection) -> TerminalResizeGrid? {
+        guard let host = hostFor(paneID), let metrics = host.state.surfaceSize,
+              let view = host.state.attachedPlatformView else { return nil }
+        let scale = view.window?.backingScaleFactor ?? 1
+        let pixels = direction == .sideBySide ? metrics.cellWidthPixels : metrics.cellHeightPixels
+        guard pixels > 0, scale > 0 else { return nil }
+        let padding = direction == .sideBySide ? settings.applied.paddingX : settings.applied.paddingY
+        return TerminalResizeGrid(cell: CGFloat(pixels) / scale, padding: CGFloat(max(0, padding) * 2))
+    }
+
     private func setDragResizeThrottle(_ dragging: Bool) {
         let configured = settings.applied.effectiveResizeThrottleMs
         let milliseconds = dragging ? max(32, configured) : configured
@@ -104,6 +114,7 @@ private struct SplitSlotsView: View {
     let node: SplitNode
     let onRatio: (UUID, Double) -> Void
     let onDragActivity: (Bool) -> Void
+    let gridFor: (UUID, SplitDirection) -> TerminalResizeGrid?
 
     var body: some View {
         switch node {
@@ -113,10 +124,12 @@ private struct SplitSlotsView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         case .split(let id, let direction, let ratio, let first, let second):
-            SplitSlotPairView(direction: direction, ratio: ratio) {
-                SplitSlotsView(node: first, onRatio: onRatio, onDragActivity: onDragActivity)
+            SplitSlotPairView(direction: direction, ratio: ratio, grid: {
+                first.panes.first.flatMap { gridFor($0.id, direction) }
+            }) {
+                SplitSlotsView(node: first, onRatio: onRatio, onDragActivity: onDragActivity, gridFor: gridFor)
             } second: {
-                SplitSlotsView(node: second, onRatio: onRatio, onDragActivity: onDragActivity)
+                SplitSlotsView(node: second, onRatio: onRatio, onDragActivity: onDragActivity, gridFor: gridFor)
             } onCommitRatio: {
                 onRatio(id, $0)
             } onDragActivity: {
@@ -126,12 +139,12 @@ private struct SplitSlotsView: View {
     }
 }
 
-/// One divider + two slots with exact proportional sizing. Shared geometry
-/// with the surface overlay: first child takes `total * ratio`, the rest
-/// flows to the second.
+/// One divider + two slots. Snap the first child's dimension to its
+/// character grid, then let the second child fill the remaining space.
 private struct SplitSlotPairView<First: View, Second: View>: View {
     let direction: SplitDirection
     let ratio: Double
+    let grid: () -> TerminalResizeGrid?
     @ViewBuilder let first: First
     @ViewBuilder let second: Second
     let onCommitRatio: (Double) -> Void
@@ -143,19 +156,19 @@ private struct SplitSlotPairView<First: View, Second: View>: View {
         GeometryReader { geo in
             let total = direction == .sideBySide ? geo.size.width : geo.size.height
             let available = max(0, total - 1) // one point for the divider
-            let displayedRatio = SplitRatio.clamp(liveRatio ?? ratio, available: available)
+            let displayedRatio = SplitRatio.snap(liveRatio ?? ratio, available: available, grid: grid())
             let firstLen = available * displayedRatio
             Group {
                 if direction == .sideBySide {
                     HStack(spacing: 0) {
                         first.frame(width: firstLen)
-                        SplitDividerView(vertical: true, available: available, startRatio: SplitRatio.clamp(ratio, available: available), liveRatio: $liveRatio, onCommitRatio: onCommitRatio, onDragActivity: onDragActivity)
+                        SplitDividerView(vertical: true, available: available, startRatio: SplitRatio.snap(ratio, available: available, grid: grid()), grid: grid, liveRatio: $liveRatio, onCommitRatio: onCommitRatio, onDragActivity: onDragActivity)
                         second.frame(maxWidth: .infinity)
                     }
                 } else {
                     VStack(spacing: 0) {
                         first.frame(height: firstLen)
-                        SplitDividerView(vertical: false, available: available, startRatio: SplitRatio.clamp(ratio, available: available), liveRatio: $liveRatio, onCommitRatio: onCommitRatio, onDragActivity: onDragActivity)
+                        SplitDividerView(vertical: false, available: available, startRatio: SplitRatio.snap(ratio, available: available, grid: grid()), grid: grid, liveRatio: $liveRatio, onCommitRatio: onCommitRatio, onDragActivity: onDragActivity)
                         second.frame(maxHeight: .infinity)
                     }
                 }
@@ -164,12 +177,30 @@ private struct SplitSlotPairView<First: View, Second: View>: View {
     }
 }
 
-/// Keeps the divider inside the space the two panes can actually occupy.
-/// When the window is too small for two 80pt panes, they share the space.
+/// Font cell size and total margin in screen points, not backing pixels.
+struct TerminalResizeGrid {
+    let cell: CGFloat
+    let padding: CGFloat
+}
+
+/// Keeps the divider inside the available space; tiny panes share it equally.
 enum SplitRatio {
+    /// Snap the first pane's usable dimension to whole cells. The sibling
+    /// keeps the window's remaining pixels; neither pane leaves unused space.
+    static func snap(_ ratio: Double, available: CGFloat, grid: TerminalResizeGrid?) -> Double {
+        let clamped = clamp(ratio, available: available)
+        guard let grid, grid.cell.isFinite, grid.cell > 0, available > 0 else { return clamped }
+        let minimum = min(32, available / 2)
+        let firstCell = max(2, ceil((minimum - grid.padding) / grid.cell))
+        let lastCell = floor((available - minimum - grid.padding) / grid.cell)
+        guard firstCell <= lastCell else { return clamped }
+        let cells = min(lastCell, max(firstCell, ((available * clamped - grid.padding) / grid.cell).rounded()))
+        return Double((cells * grid.cell + grid.padding) / available)
+    }
+
     static func clamp(_ ratio: Double, available: CGFloat) -> Double {
         guard available > 0 else { return 0.5 }
-        let minimum = max(0.1, Double(min(80, available / 2) / available))
+        let minimum = Double(min(32, available / 2) / available)
         return min(1 - minimum, max(minimum, ratio))
     }
 }
@@ -182,12 +213,14 @@ private struct SplitDividerView: View {
     let vertical: Bool
     let available: CGFloat
     let startRatio: Double
+    let grid: () -> TerminalResizeGrid?
     @Binding var liveRatio: Double?
     let onCommitRatio: (Double) -> Void
     let onDragActivity: (Bool) -> Void
 
     @State private var hovering = false
     @State private var dragging = false
+    @State private var dragGrid: TerminalResizeGrid?
 
     var body: some View {
         Rectangle()
@@ -204,6 +237,7 @@ private struct SplitDividerView: View {
                             .onChanged { value in
                                 if !dragging {
                                     dragging = true
+                                    dragGrid = grid()
                                     onDragActivity(true)
                                 }
                                 let next = draggedRatio(translation: value.translation)
@@ -213,13 +247,14 @@ private struct SplitDividerView: View {
                                 onCommitRatio(draggedRatio(translation: value.translation))
                                 liveRatio = nil
                                 dragging = false
+                                dragGrid = nil
                                 onDragActivity(false)
                             }
                     )
                     .accessibilityAdjustableAction { direction in
                         switch direction {
-                        case .increment: onCommitRatio(SplitRatio.clamp(startRatio + 0.05, available: available))
-                        case .decrement: onCommitRatio(SplitRatio.clamp(startRatio - 0.05, available: available))
+                        case .increment: onCommitRatio(adjustedRatio(1))
+                        case .decrement: onCommitRatio(adjustedRatio(-1))
                         @unknown default: break
                         }
                     }
@@ -231,9 +266,16 @@ private struct SplitDividerView: View {
             }
     }
 
+    private func adjustedRatio(_ direction: CGFloat) -> Double {
+        guard available > 0 else { return 0.5 }
+        let metrics = grid()
+        let distance = (metrics?.cell ?? available * 0.05) * direction
+        return SplitRatio.snap(startRatio + Double(distance / available), available: available, grid: metrics)
+    }
+
     private func draggedRatio(translation: CGSize) -> Double {
         guard available > 0 else { return 0.5 }
         let distance = vertical ? translation.width : translation.height
-        return SplitRatio.clamp(startRatio + Double(distance / available), available: available)
+        return SplitRatio.snap(startRatio + Double(distance / available), available: available, grid: dragGrid ?? grid())
     }
 }
