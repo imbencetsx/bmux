@@ -13,14 +13,17 @@ final class WorkspaceManager: ObservableObject {
     /// as just a terminal. Persisted like everything else.
     @Published var sidebarVisible: Bool = false
 
-    private let store = WorkspaceStore()
+    private let store: WorkspaceStore
     private var persistTask: Task<Void, Never>?
+    private var sidebarTarget: Bool?
+    private var sidebarTransitionTask: Task<Void, Never>?
     private static let accentPalette = [
         "#4DA3FF", "#2DD4BF", "#7ED957", "#F7C948",
         "#FF9F43", "#F472B6", "#A78BFA",
     ]
 
-    init() {
+    init(store: WorkspaceStore = WorkspaceStore()) {
+        self.store = store
         let restored = store.load()
         if !restored.isRestored {
             let seed = [
@@ -62,13 +65,31 @@ final class WorkspaceManager: ObservableObject {
     func detail(for id: UUID) -> WorkspaceDetail? { details[id] }
 
     func toggleSidebar() {
-        setSidebarVisible(!sidebarVisible)
+        sidebarTarget = !(sidebarTarget ?? sidebarVisible)
+        advanceSidebarTransition()
     }
 
     func setSidebarVisible(_ visible: Bool) {
-        guard sidebarVisible != visible else { return }
-        sidebarVisible = visible
+        // Ignore stale native split-view feedback while our transition is
+        // in flight. Explicit button/key requests use toggleSidebar instead.
+        guard sidebarTransitionTask == nil else { return }
+        sidebarTarget = visible
+        advanceSidebarTransition()
+    }
+
+    private func advanceSidebarTransition() {
+        guard sidebarTransitionTask == nil, let target = sidebarTarget else { return }
+        guard target != sidebarVisible else { sidebarTarget = nil; return }
+        sidebarVisible = target
         persistSoon()
+        sidebarTransitionTask = Task { [weak self] in
+            // Slightly longer than the 120ms view animation. Repeated key
+            // presses retain their final parity without overlapping layouts.
+            try? await Task.sleep(for: .milliseconds(160))
+            guard !Task.isCancelled, let self else { return }
+            self.sidebarTransitionTask = nil
+            self.advanceSidebarTransition()
+        }
     }
 
     // MARK: - Workspaces
@@ -81,13 +102,14 @@ final class WorkspaceManager: ObservableObject {
         persistSoon()
     }
 
-    func create(name: String, kind: Workspace.Kind = .local, sshCommand: String? = nil, sshTmuxSession: String? = nil) {
+    func create(name: String, kind: Workspace.Kind = .local, localTmux: Bool = false, sshCommand: String? = nil, sshTmuxSession: String? = nil) {
         let dir = active?.workingDirectory ?? NSHomeDirectory()
         let tmux = (sshTmuxSession?.isEmpty == false) ? sshTmuxSession : nil
         let ws = Workspace(
             name: name,
             kind: kind,
             workingDirectory: dir,
+            localTmux: localTmux,
             sshCommand: sshCommand,
             sshTmuxSession: tmux,
             colorHex: Self.accent(at: workspaces.count)

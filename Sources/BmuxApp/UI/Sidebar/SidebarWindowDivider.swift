@@ -12,7 +12,7 @@ struct SidebarWindowDivider: NSViewRepresentable {
     func updateNSView(_ view: AnchorView, context: Context) {
         view.line.color = NSColor(color)
         view.visible = visible
-        view.updateDivider()
+        view.scheduleUpdate()
     }
 
     static func dismantleNSView(_ view: AnchorView, coordinator: ()) {
@@ -22,6 +22,17 @@ struct SidebarWindowDivider: NSViewRepresentable {
     final class AnchorView: NSView {
         let line = LineView()
         var visible = false
+        private var updatePending = false
+
+        func scheduleUpdate() {
+            guard !updatePending else { return }
+            updatePending = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updatePending = false
+                self.updateDivider()
+            }
+        }
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -43,16 +54,16 @@ struct SidebarWindowDivider: NSViewRepresentable {
                 self, selector: #selector(geometryChanged),
                 name: NSWindow.didResizeNotification, object: window
             )
-            updateDivider()
+            scheduleUpdate()
         }
 
         override func layout() {
             super.layout()
-            updateDivider()
+            scheduleUpdate()
         }
 
         @objc private func geometryChanged(_ notification: Notification) {
-            updateDivider()
+            scheduleUpdate()
         }
 
         func updateDivider() {
@@ -66,10 +77,11 @@ struct SidebarWindowDivider: NSViewRepresentable {
                 frameView.addSubview(line, positioned: .above, relativeTo: nil)
             }
             let sidebar = convert(bounds, to: frameView)
-            line.frame = NSRect(
+            let frame = NSRect(
                 x: sidebar.maxX - 1, y: frameView.bounds.minY,
                 width: 1, height: frameView.bounds.height
             )
+            if line.frame != frame { line.frame = frame }
             line.needsDisplay = true
         }
 

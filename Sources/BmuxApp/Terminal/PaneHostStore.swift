@@ -33,21 +33,26 @@ final class PaneHost: ObservableObject {
     let bornAt = Date()
 
     private var cwdSink: AnyCancellable?
+    private var metadataTimer: Timer?
+
+    isolated deinit { metadataTimer?.invalidate() }
 
     init(
         launch: Launch,
         generation: UUID,
         controller: TerminalController,
         onClose: @escaping (Bool) -> Void,
-        onCwd: @escaping (String?) -> Void
+        onCwd: @escaping (String?) -> Void,
+        onRemoteCwd: @escaping @MainActor (String) -> Void,
+        onCommand: @escaping @MainActor (String) -> Void
     ) {
         self.paneID = launch.paneID
         self.generation = generation
         self.controller = controller
-        self.terminalView = TerminalView(frame: .zero)
+        self.terminalView = BmuxTerminalView(frame: .zero)
         let state = TerminalViewState(controller: controller)
         // A nil command falls back to ghostty's default shell lookup.
-        // Resize coalesce comes from settings (default 96 ms) so alt-screen
+        // Resize coalescing comes from settings so alt-screen
         // TUIs settle during window/split drags instead of mid-drag collapse.
         state.configuration = TerminalSurfaceOptions(
             workingDirectory: launch.workingDirectory,
@@ -60,10 +65,34 @@ final class PaneHost: ObservableObject {
         // view. Return the pane-owned view every time so reattachment keeps
         // the existing Ghostty coordinator, scrollback, and child process.
         state.makePlatformView = { [weak self] in
-            self?.terminalView ?? TerminalView(frame: .zero)
+            self?.terminalView ?? BmuxTerminalView(frame: .zero)
         }
         state.onClose = { alive in
             Task { @MainActor in onClose(alive) }
+        }
+        let directoryFile = launch.env["BMUX_REMOTE_DIRECTORY_FILE"]
+        let commandFile = launch.env["BMUX_COMMAND_FILE"]
+        if directoryFile != nil || commandFile != nil {
+            var previousDirectory: String?
+            var previousCommand: String?
+            @Sendable func read(_ path: String?) -> String? {
+                guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+                return try? JSONDecoder().decode(String.self, from: data)
+            }
+            let timer = Timer(timeInterval: 0.5, repeats: true) { _ in
+                MainActor.assumeIsolated {
+                    if let directory = read(directoryFile), directory.hasPrefix("/"), directory != previousDirectory {
+                        previousDirectory = directory
+                        onRemoteCwd(directory)
+                    }
+                    if let command = read(commandFile), command != previousCommand {
+                        previousCommand = command
+                        onCommand(command)
+                    }
+                }
+            }
+            metadataTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
         }
         // Published working directory follows `cd`, OSC 7, etc.
         cwdSink = state.$workingDirectory.sink { path in
@@ -84,6 +113,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     /// (see `EngineSettings`); later settings commits reconfigure it live
     /// via `applySettings`, never respawning shells.
     private let controller: TerminalController
+    private let servicePump: TerminalServicePump
     private var hosts: [UUID: PaneHost] = [:]
     private var closingHosts: [UUID: PaneHost] = [:]
     private let remoteCleanup = RemoteSessionCleanup()
@@ -97,6 +127,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     init(settings: AppSettings) {
         self.appSettings = settings
         self.controller = EngineSettings.makeController(settings)
+        self.servicePump = TerminalServicePump(controller: controller)
         self.transcripts.maxFileBytes = Self.transcriptCap(settings)
     }
 
@@ -187,9 +218,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
 
     /// Explicit user close, distinct from transport detach/respawn/app quit.
     func close(paneID: UUID, workspace: Workspace) {
-        if workspace.kind == .ssh,
-           let session = SSHCommand(raw: workspace.sshCommand ?? "")
-            .persistentSession(paneID: paneID, prefix: workspace.sshTmuxSession) {
+        if let session = persistentSession(workspace: workspace, paneID: paneID) {
             remoteCleanup.enqueue(session)
             let closeFile = RemoteSessionCleanup.closeFile(for: session)
             try? FileManager.default.createDirectory(at: closeFile.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -210,6 +239,11 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     // MARK: - Private
 
     private func spawn(workspace: Workspace, pane: Pane, manager: WorkspaceManager) -> PaneHost {
+        manager.mutateDetail(workspace.id) { detail in
+            for i in detail.tabs.indices {
+                detail.tabs[i].root.updatePane(pane.id) { $0.runningCommand = nil }
+            }
+        }
         transcripts.prepareForSession(paneID: pane.id)
         let wsID = workspace.id, pid = pane.id
         let generation = UUID()
@@ -225,8 +259,28 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
             onCwd: { [weak self] path in
                 // Local only: an SSH pane's reported directory is REMOTE and
                 // must never become a local spawn directory.
-                guard isLocal, let path, self?.hosts[pid]?.generation == generation else { return }
+                guard isLocal, !workspace.usesTmux, let path, self?.hosts[pid]?.generation == generation else { return }
                 self?.handleCwd(workspaceID: wsID, paneID: pid, path: path, manager: manager)
+            },
+            onRemoteCwd: { [weak self] path in
+                guard self?.hosts[pid]?.generation == generation else { return }
+                if isLocal {
+                    self?.handleCwd(workspaceID: wsID, paneID: pid, path: path, manager: manager)
+                    return
+                }
+                manager.mutateDetail(wsID) { detail in
+                    for i in detail.tabs.indices {
+                        detail.tabs[i].root.updatePane(pid) { $0.remoteWorkingDirectory = path }
+                    }
+                }
+            },
+            onCommand: { [weak self] command in
+                guard self?.hosts[pid]?.generation == generation else { return }
+                manager.mutateDetail(wsID) { detail in
+                    for i in detail.tabs.indices {
+                        detail.tabs[i].root.updatePane(pid) { $0.runningCommand = foregroundCommandName(command) }
+                    }
+                }
             }
         )
         hosts[pane.id] = host
@@ -235,23 +289,67 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
         return host
     }
 
+    private func persistentSession(workspace: Workspace, paneID: UUID, directory: String? = nil) -> RemoteSession? {
+        if workspace.kind == .ssh {
+            return SSHCommand(raw: workspace.sshCommand ?? "")
+                .persistentSession(paneID: paneID, prefix: workspace.sshTmuxSession)
+        }
+        guard workspace.localTmux == true else { return nil }
+        return RemoteSession(localPaneID: paneID.uuidString,
+                             workingDirectory: directory ?? workspace.workingDirectory,
+                             shell: resolvedShell)
+    }
+
     /// Command + env + cwd for one spawn. Prefers the `bmux-launch` helper
     /// (auto-restore); falls back to a direct command without recording when
     /// the helper can't be installed.
     private func launchConfig(workspace: Workspace, pane: Pane) -> PaneHost.Launch {
         let tsPath = transcripts.path(for: pane.id)
+        let commandFile = tsPath + ".command"
+        try? FileManager.default.removeItem(atPath: commandFile)
         let basePath = ProcessInfo.processInfo.environment["PATH"]
         let restore = transcripts.hasContent(paneID: pane.id)
         let restoreBytes = max(1024, appSettings.restoreTailKB * 1024)
+        if workspace.usesTmux {
+            if PaneLauncher.install() != nil,
+               let session = persistentSession(workspace: workspace, paneID: pane.id, directory: pane.workingDirectory ?? workspace.workingDirectory),
+               let data = try? JSONEncoder().encode(session), let json = String(data: data, encoding: .utf8) {
+                // Live state comes from tmux's current grid/history, never
+                // a stale recording. bmux-launch reconnects this same ID.
+                var env = PaneLauncher.environment(
+                    transcriptPath: tsPath, restore: false,
+                    inner: session.executablePath, basePath: basePath,
+                    restoreBytes: restoreBytes,
+                    maxTranscriptBytes: transcripts.maxFileBytes)
+                let directoryFile = tsPath + ".remote-directory"
+                try? FileManager.default.removeItem(atPath: directoryFile)
+                env["BMUX_REMOTE_DIRECTORY_FILE"] = directoryFile
+                env["BMUX_COMMAND_FILE"] = commandFile
+                env["BMUX_REMOTE_SESSION"] = json
+                env["BMUX_CLOSE_FILE"] = RemoteSessionCleanup.closeFile(for: session).path
+                env["BMUX_CLOSE_DIRECTORY"] = RemoteSessionCleanup.closeFile(for: session).deletingLastPathComponent().path
+                env["BMUX_CLEANUP_FILE"] = remoteCleanup.journalPath
+                return PaneHost.Launch(
+                    paneID: pane.id,
+                    command: PaneLauncher.command(paneID: pane.id),
+                    env: env,
+                    workingDirectory: nil,
+                    resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
+            }
+            return PaneHost.Launch(paneID: pane.id,
+                command: "/usr/bin/printf bmux-launch-is-missing.-Rebuild-the-app-to-enable-tmux.", env: [:],
+                workingDirectory: nil, resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
+        }
         switch workspace.kind {
         case .local:
             let shell = resolvedShell
             if PaneLauncher.install() != nil, shell.isSpaceFree {
-                let env = PaneLauncher.environment(
+                var env = PaneLauncher.environment(
                     transcriptPath: tsPath, restore: restore,
                     inner: "\(shell) -l", basePath: basePath,
                     restoreBytes: restoreBytes,
                     maxTranscriptBytes: transcripts.maxFileBytes)
+                env["BMUX_COMMAND_FILE"] = commandFile
                 return PaneHost.Launch(
                     paneID: pane.id,
                     command: PaneLauncher.command(paneID: pane.id), env: env,
@@ -266,28 +364,6 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
                 workingDirectory: pane.workingDirectory ?? workspace.workingDirectory,
                 resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
         case .ssh:
-            let ssh = SSHCommand(raw: workspace.sshCommand ?? "")
-            if PaneLauncher.install() != nil,
-               let session = ssh.persistentSession(paneID: pane.id, prefix: workspace.sshTmuxSession),
-               let data = try? JSONEncoder().encode(session), let json = String(data: data, encoding: .utf8) {
-                // Remote state comes from tmux's current grid/history, never
-                // a stale recording. bmux-launch reconnects this same ID.
-                var env = PaneLauncher.environment(
-                    transcriptPath: tsPath, restore: false,
-                    inner: "ssh", basePath: basePath,
-                    restoreBytes: restoreBytes,
-                    maxTranscriptBytes: transcripts.maxFileBytes)
-                env["BMUX_REMOTE_SESSION"] = json
-                env["BMUX_CLOSE_FILE"] = RemoteSessionCleanup.closeFile(for: session).path
-                env["BMUX_CLOSE_DIRECTORY"] = RemoteSessionCleanup.closeFile(for: session).deletingLastPathComponent().path
-                env["BMUX_CLEANUP_FILE"] = remoteCleanup.journalPath
-                return PaneHost.Launch(
-                    paneID: pane.id,
-                    command: PaneLauncher.command(paneID: pane.id),
-                    env: env,
-                    workingDirectory: nil,
-                    resizeThrottleMs: appSettings.effectiveResizeThrottleMs)
-            }
             // Fail visibly rather than quietly launching a disposable SSH
             // session and losing the persistence contract.
             return PaneHost.Launch(paneID: pane.id,
@@ -318,7 +394,7 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
         guard let ws = manager.workspaces.first(where: { $0.id == workspaceID }) else { return }
         let livedLong = appSettings.autoRelaunch
             && Date().timeIntervalSince(host.bornAt) > max(0, appSettings.relaunchAfterSeconds)
-        if ws.kind == .local, livedLong, let pane = paneIn(manager, workspaceID: workspaceID, paneID: paneID) {
+        if ws.kind == .local, !ws.usesTmux, livedLong, let pane = paneIn(manager, workspaceID: workspaceID, paneID: paneID) {
             hosts.removeValue(forKey: paneID)
             let replacement = spawn(workspace: ws, pane: pane, manager: manager)
             _ = replacement
@@ -340,7 +416,10 @@ final class PaneHostStore: TerminalEngine, ObservableObject {
     private func setStatus(_ status: PaneStatus, workspaceID: UUID, paneID: UUID, manager: WorkspaceManager) {
         manager.mutateDetail(workspaceID) { detail in
             for i in detail.tabs.indices {
-                detail.tabs[i].root.updatePane(paneID) { $0.status = status }
+                detail.tabs[i].root.updatePane(paneID) {
+                    $0.status = status
+                    if case .disconnected = status { $0.runningCommand = nil }
+                }
             }
         }
     }

@@ -116,28 +116,75 @@ struct AppearancePane: View {
 private struct ThemePicker: View {
     @Binding var selection: String
     @State private var query = ""
+    @State private var filter: ThemeFilter = .all
+
+    private enum ThemeFilter: String, CaseIterable, Identifiable {
+        case all = "All", dark = "Dark", light = "Light"
+        var id: Self { self }
+    }
 
     var body: some View {
-        TextField("Search themes", text: $query)
-            .textFieldStyle(.roundedBorder)
-        if let current = GhosttyThemeCatalog.theme(named: selection) {
-            ThemeRow(definition: current, selected: true) {}
-                .disabled(true)
-        } else {
-            Text("“\(selection)” is not in the catalog — pick a theme below.")
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Search themes", text: $query)
+                .textFieldStyle(.roundedBorder)
+            Picker("Theme appearance", selection: $filter) {
+                ForEach(ThemeFilter.allCases) { filter in
+                    Text(filter.rawValue).tag(filter)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if let current = GhosttyThemeCatalog.theme(named: selection) {
+                ThemeRow(definition: current, selected: true) {}
+                    .disabled(true)
+            } else {
+                Text("“\(selection)” is not in the catalog — pick a theme below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 4) {
+                        Color.clear.frame(height: 0).id("theme-list-top")
+                        ForEach(matches) { definition in
+                            ThemeRow(definition: definition, selected: definition.name == selection) {
+                                selection = definition.name
+                            }
+                            .id(definition.name)
+                        }
+                        if matches.isEmpty {
+                            Text("No matching themes")
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 24)
+                        }
+                    }
+                    .padding(6)
+                }
+                .scrollIndicators(.visible)
+                .frame(height: 260)
+                .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 8))
+                .onAppear { proxy.scrollTo(selection, anchor: .center) }
+                .onChange(of: query) { _, _ in proxy.scrollTo("theme-list-top", anchor: .top) }
+                .onChange(of: filter) { _, _ in proxy.scrollTo("theme-list-top", anchor: .top) }
+            }
+            Text("\(matches.count) themes · Select a theme to preview it live")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        List(matches) { definition in
-            ThemeRow(definition: definition, selected: definition.name == selection) {
-                selection = definition.name
-            }
-        }
-        .frame(height: 220)
     }
 
     private var matches: [GhosttyThemeDefinition] {
-        query.isEmpty ? GhosttyThemeCatalog.allThemes : GhosttyThemeCatalog.search(query)
+        let search = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let themes = search.isEmpty ? GhosttyThemeCatalog.allThemes : GhosttyThemeCatalog.search(search)
+        return themes.filter { definition in
+            switch filter {
+            case .all: true
+            case .dark: definition.isDark
+            case .light: !definition.isDark
+            }
+        }
     }
 }
 

@@ -52,7 +52,7 @@ enum TabCloseMode: String, Codable, Hashable, Sendable, CaseIterable {
 /// (dark theme + light theme), where per-color hex overrides win. `nil`/empty
 /// means "Ghostty default" — those keys are omitted, never zeroed.
 struct AppSettings: Codable, Hashable, Sendable {
-    var version: Int = 1
+    var version: Int = 4
 
     // MARK: Appearance
 
@@ -113,8 +113,8 @@ struct AppSettings: Codable, Hashable, Sendable {
     var defaultHeight: Double = 800
     var rememberFrame: Bool = false
     /// Grid breathing room. Always emitted (defaults = current look).
-    var paddingX: Int = 8
-    var paddingY: Int = 8
+    var paddingX: Int = 6
+    var paddingY: Int = 6
     /// Unfocused-split dim, 0...0.6.
     var unfocusedDim: Double = 0.28
     /// Host-side resize coalesce window in ms. `nil`/missing = off (every
@@ -230,7 +230,7 @@ struct AppSettings: Codable, Hashable, Sendable {
 /// persist + one engine apply via `onCommit` (wired by the app entry).
 @MainActor
 final class AppSettingsStore: ObservableObject {
-    static let fileVersion = 1
+    static let fileVersion = 4
 
     @Published var current: AppSettings
 
@@ -293,6 +293,18 @@ final class AppSettingsStore: ObservableObject {
               let envelope = try? JSONDecoder().decode(Envelope.self, from: data)
         else { return AppSettings() }
         var settings = envelope.settings
+        // Update previous default margins once; custom padding remains
+        // adjustable in Window settings after migration.
+        if envelope.version < 4 {
+            if settings.paddingX == 2 || (envelope.version < 3 && settings.paddingX == 0)
+                || (envelope.version < 2 && settings.paddingX == 8) {
+                settings.paddingX = 6
+            }
+            if settings.paddingY == 2 || (envelope.version < 3 && settings.paddingY == 0)
+                || (envelope.version < 2 && settings.paddingY == 8) {
+                settings.paddingY = 6
+            }
+        }
         settings.version = fileVersion
         return settings
     }
