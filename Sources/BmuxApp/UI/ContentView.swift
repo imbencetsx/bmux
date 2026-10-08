@@ -281,7 +281,7 @@ struct ContentView: View {
     /// stale proxy across workspace switches so it never lingers.
     private func updateWindowTitle() {
         let window = NSApp.keyWindow ?? NSApp.windows.first
-        window?.title = manager.active?.name ?? "Bmux"
+        window?.title = manager.active?.name ?? "[bmux]"
         window?.representedURL = nil
     }
 
