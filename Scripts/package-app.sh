@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 
 CONFIG="${1:-debug}"
 BIN=".build/$CONFIG/bmux"
-APP="Bmux.app"
+APP="[bmux].app"
 
 [ -x "$BIN" ] || { echo "missing $BIN — run 'swift build' first"; exit 1; }
 
@@ -23,16 +23,16 @@ if [ -x "$LAUNCH" ]; then
     cp "$LAUNCH" "$APP/Contents/MacOS/bmux-launch"
 fi
 
-# App icon: Icon Composer source vendored at Assets/bmux.icon, compiled with
+# App icon: Icon Composer source vendored at Assets/bmux2.icon, compiled with
 # Xcode's actool into Contents/Resources/Assets.car. Info.plist points at it
 # via CFBundleIconName (must match the .icon filename).
-if [ -d "Assets/bmux.icon" ]; then
+if [ -d "Assets/bmux2.icon" ]; then
     ACTOOL="$(xcrun --find actool 2>/dev/null || command -v actool)"
     ACTOOL_OUT="$("$ACTOOL" --compile "$APP/Contents/Resources" \
         --platform macosx --minimum-deployment-target 14.0 \
-        "Assets/bmux.icon" 2>&1)" || {
+        "Assets/bmux2.icon" 2>&1)" || {
         echo "$ACTOOL_OUT" >&2
-        echo "actool failed to compile Assets/bmux.icon" >&2
+        echo "actool failed to compile Assets/bmux2.icon" >&2
         exit 1
     }
 fi
@@ -43,21 +43,21 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Bmux</string>
+    <string>[bmux]</string>
     <key>CFBundleDisplayName</key>
-    <string>Bmux</string>
+    <string>[bmux]</string>
     <key>CFBundleIdentifier</key>
     <string>dev.bmux.app</string>
     <key>CFBundleVersion</key>
-    <string>0.1.0</string>
+    <string>1.2.1</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>1.2.1</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
     <string>Bmux</string>
     <key>CFBundleIconName</key>
-    <string>bmux</string>
+    <string>bmux2</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHighResolutionCapable</key>
@@ -76,4 +76,4 @@ done
 # Ad-hoc sign so LaunchServices/Gatekeeper accept the local bundle.
 codesign --force --deep --sign - "$APP" 2>/dev/null || true
 
-echo "Built $APP — open with: open $APP"
+echo "Built $APP — open with: open '$APP'"

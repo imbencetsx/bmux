@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-test-package:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          ls /Applications | grep -i Xcode || true
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
+          xcodebuild -version
+          swift --version
+          xcrun -sdk macosx --show-sdk-version
+
+      - name: Install tmux (for swift test integration checks)
+        run: brew install tmux || brew upgrade tmux || true
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build app and DMG
+        run: |
+          chmod +x Scripts/*.sh
+          ./Scripts/package-dmg.sh release
+          ls -lh *.dmg "[bmux].app" || true
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: bmux-macos-${{ github.sha }}
+          path: bmux-*.dmg
+          if-no-files-found: error

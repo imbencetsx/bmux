@@ -1,4 +1,4 @@
-# Bmux — a calm, workspace-oriented terminal for macOS
+# [bmux] — a calm, workspace-oriented terminal for macOS
 
 Bmux is a native macOS terminal that organizes your shells the way you
 actually work: **workspaces** in a quiet sidebar, each with its own tabs,
@@ -55,9 +55,21 @@ activation override):
 
 ```sh
 swift build
-./Scripts/package-app.sh # produces Bmux.app
-open Bmux.app
+./Scripts/package-app.sh # produces [bmux].app
+open '[bmux].app'
 ```
+
+To build a drag-to-Applications disk image with side-by-side icons:
+
+```sh
+./Scripts/package-dmg.sh release # produces bmux-1.2.1-macos-arm64.dmg on Apple Silicon
+```
+
+The first build installs pinned packaging tools into `.build/dmg-tools`
+(requires Python 3 and internet access). Building requires no Finder automation.
+The resulting app is ad-hoc signed, without Apple notarization.
+The installer uses a dark background and Geist Mono typography; font files and
+their license are included in `Assets/Fonts`.
 
 ## Where things live
 
