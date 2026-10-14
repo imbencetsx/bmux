@@ -244,9 +244,13 @@ struct ContentView: View {
         )
         Group {
             if settings.current.showSingleTab || detail.tabs.count > 1 {
-                TerminalTabStrip(workspace: ws, detail: detail, ops: ops)
+                TerminalTabStrip(
+                    workspace: ws, detail: detail,
+                    onSelect: { manager.selectTab($0, in: ws.id) },
+                    onClose: { ops.closeTab($0, in: ws) }
+                )
             } else {
-                Color.clear.frame(height: 40)
+                Color.clear.frame(height: 40).allowsHitTesting(false)
             }
         }
         .overlay(alignment: .trailing) { actions }

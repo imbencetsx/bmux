@@ -30,15 +30,16 @@ import SwiftUI
 /// the last pane cascades to close its terminal (`TerminalOps`).
 struct TerminalTabStrip: View {
     @Environment(\.colorScheme) private var scheme
-    @EnvironmentObject private var manager: WorkspaceManager
     @EnvironmentObject private var settings: AppSettingsStore
 
     let workspace: Workspace
     let detail: WorkspaceDetail
-    let ops: TerminalOps
+    let onSelect: (UUID) -> Void
+    let onClose: (UUID) -> Void
 
     @Namespace private var selection
     @State private var hoveredID: UUID?
+    @State private var contentWidth: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
@@ -52,12 +53,17 @@ struct TerminalTabStrip: View {
                 .background(containerFill, in: .rect(cornerRadius: 13))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 3)
-                // Center the pill when it fits; grow + scroll when it doesn't.
-                .frame(minWidth: geo.size.width, alignment: .center)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.width
+                } action: { contentWidth = $0 }
             }
+            // The native scroll view intercepts input throughout its frame,
+            // even over transparent content. Keep it as narrow as the tabs;
+            // the surrounding terminal remains selectable and clickable.
+            .frame(width: min(contentWidth, geo.size.width))
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .frame(height: 40)
-        .background(.clear)
         .environment(\.colorScheme, contrast)
         .animation(.easeOut(duration: 0.18), value: activeID)
         .animation(.easeOut(duration: 0.15), value: hoveredID)
@@ -95,7 +101,7 @@ struct TerminalTabStrip: View {
         // The separate close button overlays its reserved trailing space.
         return ZStack(alignment: .trailing) {
             Button {
-                manager.selectTab(tab.id, in: workspace.id)
+                onSelect(tab.id)
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: terminalTabIcon(for: workspace))
@@ -167,7 +173,7 @@ struct TerminalTabStrip: View {
     /// Close exactly this tab (hosts retired first inside `TerminalOps`).
     private func close(_ tab: Tab) {
         if hoveredID == tab.id { hoveredID = nil }
-        ops.closeTab(tab.id, in: workspace)
+        onClose(tab.id)
     }
 
     /// Whether this segment shows its ×: always, never, or only the
