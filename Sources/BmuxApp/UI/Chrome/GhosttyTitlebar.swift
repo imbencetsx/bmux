@@ -20,7 +20,6 @@ struct TerminalTopBar: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Spacer(minLength: 0)
             BmuxGlassGroup(spacing: 6) {
                 HStack(spacing: 6) {
                     topBarButton(
@@ -52,7 +51,6 @@ struct TerminalTopBar: View {
         }
         .padding(.trailing, 10)
         .frame(height: 40)
-        .background(.clear)
     }
 
     // MARK: - Private
