@@ -49,9 +49,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIdentifier</key>
     <string>dev.bmux.app</string>
     <key>CFBundleVersion</key>
-    <string>1.2.1</string>
+    <string>1.2.2</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.2.1</string>
+    <string>1.2.2</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
