@@ -215,89 +215,15 @@ struct WorkspacesPane: View {
             }
             ForEach(manager.workspaces) { ws in
                 Section {
-                    WorkspaceColorRow(workspace: ws)
+                    WorkspaceColorControls(workspaceID: ws.id)
                 } header: {
                     Text(ws.name)
                 }
             }
-            SettingNote(text: "The stripe shows on the workspace's sidebar row. Default removes it.")
+            SettingNote(text: "The stripe shows on the workspace's sidebar row. Choose No color to remove it.")
         }
         .formStyle(.grouped)
         .navigationTitle("Workspaces")
         .padding()
-    }
-}
-
-/// One workspace's color as a row of tappable dots: Default first, then
-/// the palette, then a custom picker. The selected dot carries a ring.
-private struct WorkspaceColorRow: View {
-    @Environment(\.colorScheme) private var scheme
-    @EnvironmentObject private var manager: WorkspaceManager
-    let workspace: Workspace
-
-    var body: some View {
-        HStack(spacing: 10) {
-            colorDot(
-                fill: AnyShapeStyle(Color(nsColor: .controlBackgroundColor)),
-                selected: workspace.colorHex == nil,
-                help: "Default (no stripe)",
-                label: "Default color"
-            ) {
-                manager.setColor(workspace.id, to: nil)
-            }
-            .overlay {
-                if workspace.colorHex == nil {
-                    Image(systemName: "slash.circle")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .accessibilityHidden(true)
-                }
-            }
-            ForEach(WorkspaceAccent.all) { accent in
-                colorDot(
-                    fill: AnyShapeStyle(accent.color),
-                    selected: workspace.colorHex?.uppercased() == accent.hex.uppercased(),
-                    help: accent.name,
-                    label: "\(accent.name) color"
-                ) {
-                    manager.setColor(workspace.id, to: accent.hex)
-                }
-            }
-            ColorPicker(selection: customBinding, supportsOpacity: false) {
-                Text("Custom")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .help("Custom color")
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 2)
-    }
-
-    /// One 22pt dot with a selection ring.
-    private func colorDot(
-        fill: AnyShapeStyle,
-        selected: Bool,
-        help helpText: String,
-        label: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Circle()
-                .fill(fill)
-                .frame(width: 22, height: 22)
-                .overlay(Circle().stroke(.black.opacity(0.25), lineWidth: 0.5))
-                .overlay(Circle().stroke(Color.primary, lineWidth: selected ? 2 : 0))
-        }
-        .buttonStyle(.plain)
-        .help("\(helpText)\(selected ? " (current)" : "")")
-        .accessibilityLabel(label)
-    }
-
-    private var customBinding: Binding<Color> {
-        Binding(
-            get: { EngineSettings.color(fromHex: workspace.colorHex ?? "") ?? BmuxTheme.brand(scheme) },
-            set: { manager.setColor(workspace.id, to: EngineSettings.hex(from: $0)) }
-        )
     }
 }

@@ -13,6 +13,7 @@ struct SidebarView: View {
     @EnvironmentObject private var hosts: PaneHostStore
     @EnvironmentObject private var settings: AppSettingsStore
     @State private var renaming: Workspace?
+    @State private var coloring: Workspace?
     @State private var renameText: String = ""
     @State private var showingSSH = false
     @State private var sshName = ""
@@ -83,6 +84,9 @@ struct SidebarView: View {
             }
             .onAppear { renameText = ws.name }
         }
+        .sheet(item: $coloring) { workspace in
+            WorkspaceColorSheet(workspace: workspace)
+        }
         .sheet(isPresented: $showingSSH) {
             SSHWorkspaceSheet(name: $sshName, command: $sshCommandText, tmuxSession: $sshTmux) {
                 manager.create(
@@ -144,31 +148,9 @@ struct SidebarView: View {
         Divider()
         Button("Rename") { renaming = ws; renameText = ws.name }
         Button("Duplicate") { manager.duplicate(ws.id) }
-        Menu("Workspace color") {
-            Button("Default") { manager.setColor(ws.id, to: nil) }
-            ColorPicker("Custom color", selection: colorBinding(for: ws), supportsOpacity: false)
-            Divider()
-            ForEach(WorkspaceAccent.all) { accent in
-                Button {
-                    manager.setColor(ws.id, to: accent.hex)
-                } label: {
-                    Label(accent.name, systemImage: "circle.fill")
-                        .foregroundStyle(accent.color)
-                }
-            }
-        }
+        Button("Workspace color…") { coloring = ws }
         Divider()
         Button("Delete", role: .destructive) { deleteWorkspace(ws.id) }
-    }
-
-    private func colorBinding(for workspace: Workspace) -> Binding<Color> {
-        Binding(
-            get: {
-                EngineSettings.color(fromHex: workspace.colorHex ?? "")
-                    ?? BmuxTheme.brand(scheme)
-            },
-            set: { manager.setColor(workspace.id, to: EngineSettings.hex(from: $0)) }
-        )
     }
 
     private func deleteWorkspace(_ id: UUID) {
@@ -268,27 +250,6 @@ private struct WorkspaceRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(workspace.name), \(folders.map(\.label).joined(separator: ", ")), \(terminalCount) terminals, \(paneCount) panes")
     }
-}
-
-/// Shared workspace accent palette: the sidebar stripe, the context menu,
-// and the Workspaces settings pane all draw from this so a color looks the
-// same everywhere it is picked or shown.
-struct WorkspaceAccent: Identifiable {
-    let name: String
-    let hex: String
-
-    var id: String { hex }
-    var color: Color { EngineSettings.color(fromHex: hex) ?? .gray }
-
-    static let all: [WorkspaceAccent] = [
-        .init(name: "Blue", hex: "#4DA3FF"),
-        .init(name: "Teal", hex: "#2DD4BF"),
-        .init(name: "Green", hex: "#7ED957"),
-        .init(name: "Yellow", hex: "#F7C948"),
-        .init(name: "Orange", hex: "#FF9F43"),
-        .init(name: "Pink", hex: "#F472B6"),
-        .init(name: "Purple", hex: "#A78BFA"),
-    ]
 }
 
 // MARK: - Sidebar Glass Surface
