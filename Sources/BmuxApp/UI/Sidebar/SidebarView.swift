@@ -9,6 +9,7 @@ import SwiftUI
 /// A flat workspace list with no system-enforced Local/SSH categories.
 struct SidebarView: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var manager: WorkspaceManager
     @EnvironmentObject private var hosts: PaneHostStore
     @EnvironmentObject private var settings: AppSettingsStore
@@ -20,31 +21,34 @@ struct SidebarView: View {
     @State private var sshCommandText = ""
     @State private var sshTmux = ""
 
-    var body: some View {
-        List {
-            ForEach(manager.workspaces) { ws in
-                Button {
-                    manager.select(ws.id)
-                } label: {
-                    WorkspaceRow(
-                        workspace: ws,
-                        paneCount: paneCount(ws),
-                        terminalCount: manager.detail(for: ws.id)?.tabs.count ?? 0,
-                        folders: workspaceFolders(ws),
-                        contrast: BmuxTheme.contrastScheme(settings: settings.applied, system: scheme),
-                        isSelected: manager.activeID == ws.id
-                    )
-                }
-                .buttonStyle(.plain)
-                .listRowInsets(EdgeInsets())
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-                .accessibilityAddTraits(manager.activeID == ws.id ? .isSelected : [])
-                .contextMenu { workspaceMenu(ws) }
+    private var selectedWorkspace: Binding<UUID?> {
+        Binding(
+            get: { manager.activeID },
+            set: { id in
+                if let id { manager.select(id) }
             }
-            .onMove { manager.move(from: $0, to: $1) }
+        )
+    }
+
+    var body: some View {
+        WorkspaceSidebarList(
+            workspaces: manager.workspaces,
+            selection: selectedWorkspace,
+            background: BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme),
+            reduceMotion: reduceMotion,
+            onMove: { manager.move(from: $0, to: $1) }
+        ) { ws in
+            WorkspaceRow(
+                workspace: ws,
+                paneCount: paneCount(ws),
+                terminalCount: manager.detail(for: ws.id)?.tabs.count ?? 0,
+                folders: workspaceFolders(ws),
+                contrast: BmuxTheme.contrastScheme(settings: settings.applied, system: scheme),
+                isSelected: manager.activeID == ws.id
+            )
+            .accessibilityAddTraits(manager.activeID == ws.id ? .isSelected : [])
+            .contextMenu { workspaceMenu(ws) }
         }
-        .listStyle(.plain)
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             if manager.sidebarVisible {
@@ -224,6 +228,11 @@ private struct WorkspaceRow: View {
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .accessibilityLabel("\(terminalCount) terminals, \(paneCount) panes")
+            Image(systemName: "circle.grid.2x3.fill")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .help("Drag to reorder workspace")
+                .accessibilityHidden(true)
         }
         .environment(\.colorScheme, contrast)
         .padding(.leading, 23)
