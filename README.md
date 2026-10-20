@@ -62,7 +62,7 @@ open '[bmux].app'
 To build a drag-to-Applications disk image with side-by-side icons:
 
 ```sh
-./Scripts/package-dmg.sh release # produces bmux-1.2.2-macos-arm64.dmg on Apple Silicon
+./Scripts/package-dmg.sh release # produces bmux-1.3.0-macos-arm64.dmg on Apple Silicon
 ```
 
 The first build installs pinned packaging tools into `.build/dmg-tools`
