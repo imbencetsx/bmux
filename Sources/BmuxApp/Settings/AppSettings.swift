@@ -64,6 +64,9 @@ struct AppSettings: Codable, Hashable, Sendable {
     var backgroundOpacity: Double = 1.0
     /// Always emitted, 0 = off.
     var backgroundBlur: Int = 0
+    /// Extend the translucent terminal background to the sidebar and title
+    /// bar. Off keeps that chrome opaque (Terminal.app style).
+    var transparentChrome: Bool = false
     var enforceContrast: Bool = false
     /// WCAG-style ratio, used only when `enforceContrast` is on.
     var minimumContrast: Double = 4.5
@@ -167,6 +170,7 @@ struct AppSettings: Codable, Hashable, Sendable {
         lightThemeName = try c.decodeIfPresent(String.self, forKey: .lightThemeName) ?? lightThemeName
         backgroundOpacity = try c.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? backgroundOpacity
         backgroundBlur = try c.decodeIfPresent(Int.self, forKey: .backgroundBlur) ?? backgroundBlur
+        transparentChrome = try c.decodeIfPresent(Bool.self, forKey: .transparentChrome) ?? transparentChrome
         enforceContrast = try c.decodeIfPresent(Bool.self, forKey: .enforceContrast) ?? enforceContrast
         minimumContrast = try c.decodeIfPresent(Double.self, forKey: .minimumContrast) ?? minimumContrast
         customBackgroundHex = try c.decodeIfPresent(String.self, forKey: .customBackgroundHex) ?? customBackgroundHex

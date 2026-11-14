@@ -43,6 +43,10 @@ enum PersistentTmux {
             let transportFailed = code == 255 || code >= 128 || control.needsReconnect
             if (!control.needsReconnect && (control.ended || control.failed)) || control.authenticationFailed || !transportFailed {
                 if control.ended { print("\r\nbmux: tmux detached or the session ended. Use Reconnect to reattach or start a session.\r") }
+                else if !control.started {
+                    let transport = session.isLocal ? "Local tmux" : "SSH/tmux"
+                    fputs("\r\nbmux: \(transport) startup failed (exit \(code)). Check the error above.\r\n", stdout)
+                }
                 // Keep diagnostics visible until the user reconnects/closes;
                 // Ghostty's exit overlay otherwise hides the useful error.
                 hold()

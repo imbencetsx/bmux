@@ -78,7 +78,7 @@ struct ContentView: View {
         }
         .focusedSceneValue(\.terminalWindowActive, true)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.12), value: manager.sidebarVisible)
-        .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+        .background(BmuxTheme.windowFill(settings: settings.applied, scheme: scheme))
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             if !manager.sidebarVisible {
@@ -119,10 +119,22 @@ struct ContentView: View {
             }
         }
         .toolbarBackground(
-            BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme),
+            BmuxTheme.chromeFill(settings: settings.applied, scheme: scheme),
             for: .windowToolbar
         )
-        .toolbarBackground(.visible, for: .windowToolbar)
+        .toolbarBackground(
+            BmuxTheme.chromeIsTranslucent(settings: settings.applied) ? .hidden : .visible,
+            for: .windowToolbar
+        )
+        // Window-level see-through + backdrop blur for translucent settings.
+        .background {
+            WindowTransparency(
+                translucent: EngineSettings.isTranslucent(settings.applied),
+                blurRadius: settings.applied.backgroundBlur
+            )
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
         .onAppear { ops.ensureHosts(); updateWindowTitle(); applyFramePolicy() }
         .onChange(of: manager.details) { _, _ in ops.ensureHosts() }
         .onChange(of: manager.activeID) { _, _ in ops.ensureHosts(); updateWindowTitle() }
@@ -209,7 +221,7 @@ struct ContentView: View {
                         if chromeHoveredWorkspaceID == ws.id { chromeHoveredWorkspaceID = nil }
                     }
                 }
-                .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+                .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
             } else {
                 ContentUnavailableView(
                     "No terminal",
@@ -220,7 +232,7 @@ struct ContentView: View {
                     \.colorScheme,
                     BmuxTheme.contrastScheme(settings: settings.applied, system: scheme)
                 )
-                .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+                .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
             }
         }
         // BITTyping parity: a SwiftUI-managed navigation title is what
@@ -266,7 +278,7 @@ struct ContentView: View {
             \.colorScheme,
             BmuxTheme.contrastScheme(settings: settings.applied, system: scheme)
         )
-        .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+        .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
     }
 
     private func focusedPane(tab: Tab) -> Pane? {

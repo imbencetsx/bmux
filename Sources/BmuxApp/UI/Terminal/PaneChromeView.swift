@@ -56,7 +56,7 @@ struct PaneChromeView: View {
                 } else if sshIssue == nil, pane.status == .connected {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+                        .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
                 } else {
                     statusOverlay
                 }
@@ -96,7 +96,7 @@ struct PaneChromeView: View {
                 .transition(.opacity)
             }
         }
-        .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+        .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.15), value: hovering)
         // Explicit visibility (not appear/disappear): the overlay keeps
@@ -174,7 +174,7 @@ struct PaneChromeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .environment(\.colorScheme, contrast)
-        .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+        .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
     }
 
     private var overlayTitle: String {

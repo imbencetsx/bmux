@@ -38,7 +38,10 @@ enum EngineSettings {
             b.withCursorOpacity(s.cursorOpacity)
             b.withWindowPaddingX(s.paddingX)
             b.withWindowPaddingY(s.paddingY)
-            b.withBackgroundOpacity(s.backgroundOpacity)
+            // Translucent: the window paints the one tinted layer (see
+            // `BmuxTheme.windowFill`), so the engine leaves its default
+            // background clear instead of stacking a second tint on top.
+            b.withBackgroundOpacity(isTranslucent(s) ? 0 : s.backgroundOpacity)
             b.withBackgroundBlur(s.backgroundBlur)
             if s.enforceContrast {
                 b.withMinimumContrast(s.minimumContrast)
@@ -212,13 +215,24 @@ extension EngineSettings {
         return 0.299 * r + 0.587 * g + 0.114 * b < 128
     }
 
+    /// Whether the window should be see-through at all.
+    static func isTranslucent(_ settings: AppSettings) -> Bool {
+        settings.backgroundOpacity < 0.999
+    }
+
     /// SwiftUI color for the chrome, with the user's opacity applied so a
     /// translucent terminal and its titlebar fade together.
     static func chromeBackgroundColor(for settings: AppSettings, scheme: ColorScheme) -> Color {
-        let hex = chromeBackgroundHex(for: settings, scheme: scheme)
-        let base = color(fromHex: hex) ?? Color(nsColor: .textBackgroundColor)
+        let base = chromeOpaqueColor(for: settings, scheme: scheme)
         let opacity = min(1, max(0, settings.backgroundOpacity))
         return opacity >= 0.999 ? base : base.opacity(opacity)
+    }
+
+    /// The terminal background at full opacity, regardless of the
+    /// transparency setting.
+    static func chromeOpaqueColor(for settings: AppSettings, scheme: ColorScheme) -> Color {
+        let hex = chromeBackgroundHex(for: settings, scheme: scheme)
+        return color(fromHex: hex) ?? Color(nsColor: .textBackgroundColor)
     }
 }
 

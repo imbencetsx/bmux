@@ -35,6 +35,37 @@ struct BmuxTheme {
         EngineSettings.chromeBackgroundColor(for: settings, scheme: scheme)
     }
 
+    // MARK: - Transparency Layering
+    //
+    // A translucent window must paint its tint exactly once, or stacked
+    // fills multiply back toward opaque. The window root paints
+    // `windowFill`; everything layered above it uses `surfaceFill`
+    // (terminal area) or `chromeFill` (sidebar, title bar). Opaque
+    // settings make all three the same solid color as before.
+
+    /// The single tinted layer behind the whole window.
+    static func windowFill(settings: AppSettings, scheme: ColorScheme) -> Color {
+        terminalBackground(settings: settings, scheme: scheme)
+    }
+
+    /// Fill for views stacked over the window root inside the terminal
+    /// area: clear when translucent so the root tint shows once.
+    static func surfaceFill(settings: AppSettings, scheme: ColorScheme) -> Color {
+        EngineSettings.isTranslucent(settings) ? .clear : terminalBackground(settings: settings, scheme: scheme)
+    }
+
+    /// Whether the sidebar and title bar share the terminal translucency.
+    static func chromeIsTranslucent(settings: AppSettings) -> Bool {
+        EngineSettings.isTranslucent(settings) && settings.transparentChrome
+    }
+
+    /// Sidebar/title bar fill: clear (root tint shows) when the chrome
+    /// follows the translucency, otherwise the solid theme color.
+    static func chromeFill(settings: AppSettings, scheme: ColorScheme) -> Color {
+        if chromeIsTranslucent(settings: settings) { return .clear }
+        return EngineSettings.chromeOpaqueColor(for: settings, scheme: scheme)
+    }
+
     /// Scheme text and fills over terminal surfaces should resolve under:
     /// the brightness of the terminal background actually shown — NOT the
     /// system scheme. A light catalog theme can be active while the system

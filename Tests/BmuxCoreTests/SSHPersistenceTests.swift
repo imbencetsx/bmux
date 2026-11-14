@@ -57,6 +57,49 @@ import GhosttyKit
     #expect(filter.receive(Array("\u{1B}]11;?\u{7}".utf8)) == Array("\u{1B}]11;?\u{7}".utf8))
 }
 
+@Test func `SSH diagnostics stay readable and a successful retry clears authentication failure`() {
+    var output: [UInt8] = []
+    let control = TmuxControl(columns: 80, rows: 24, emit: { output += $0 }, send: { _ in })
+    control.receive(Array("Permission denied, please try again.\r\nPassword: ".utf8))
+    #expect(control.authenticationFailed)
+    #expect(control.awaitsAuthenticationInput)
+    control.authenticationInputWasSent(Array("retry\r".utf8))
+    control.receive(Array("\n%begin 1 1 0\n%end 1 1 0\n".utf8))
+    #expect(control.started)
+    #expect(!control.authenticationFailed)
+    #expect(!control.awaitsAuthenticationInput)
+    #expect(String(decoding: output, as: UTF8.self) == "Permission denied, please try again.\r\nPassword: \r\n")
+}
+
+@Test func `SSH hardware key PIN prompts accept input without forwarding ordinary startup typing`() {
+    let control = TmuxControl(columns: 80, rows: 24, emit: { _ in }, send: { _ in })
+    control.receive(Array("Connecting to host: ".utf8))
+    #expect(!control.awaitsAuthenticationInput)
+    control.receive(Array("\nEnter PIN for security key: ".utf8))
+    #expect(control.awaitsAuthenticationInput)
+    control.authenticationInputWasSent([13])
+    #expect(!control.awaitsAuthenticationInput)
+}
+
+@Test func `missing remote tmux exits with an actionable readable diagnostic`() throws {
+    // Override command lookup in the script rather than the machine's PATH:
+    // Homebrew fallback paths intentionally exist on the development Mac.
+    let session = RemoteSession(paneID: UUID().uuidString, prefix: nil, sshArguments: ["unused"])
+    let script = try #require(session.attachArguments(columns: 80, rows: 24).last)
+        .replacingOccurrences(of: "command -v tmux", with: "command -v bmux_deliberately_missing_tmux")
+    #expect(script.hasPrefix("exec /bin/sh -c "))
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", script]
+    let output = Pipe()
+    process.standardOutput = output; process.standardError = output
+    try process.run()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 78)
+    #expect(String(decoding: data, as: UTF8.self).contains("install tmux 3.2 or newer on this SSH host"))
+}
+
 @Test func `a stalled resize synchronization reconnects without killing the remote session`() {
     var output: [UInt8] = []
     var commands: [String] = []
@@ -108,6 +151,23 @@ private let tmuxURL = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bi
 
 @Suite(.serialized, .enabled(if: tmuxURL != nil, "Install tmux to run the real persistence integration tests"))
 struct TmuxIntegrationTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["BMUX_TEST_SSH_HOST"] != nil))
+    func `SSH tmux reconnect restores the same live process`() throws {
+        let fixture = try TmuxFixture(remoteHost: ProcessInfo.processInfo.environment["BMUX_TEST_SSH_HOST"])
+        defer { fixture.cleanup() }
+        let client = try fixture.attach()
+        try client.until { client.control.ready }
+        let pid = try fixture.run(["display-message", "-p", "-t", fixture.session.name, "#{pane_pid}"])
+        client.control.input(Array("printf 'BMUX_SSH_CONNECTED\\n'\r".utf8))
+        try client.until { client.text.contains("BMUX_SSH_CONNECTED") }
+        client.disconnect()
+        let reopened = try fixture.attach()
+        try reopened.until { reopened.control.ready && reopened.text.contains("BMUX_SSH_CONNECTED") }
+        #expect(try fixture.run(["display-message", "-p", "-t", fixture.session.name, "#{pane_pid}"]) == pid)
+        reopened.control.input(Array("printf 'BMUX_SSH_REATTACHED\\n'\r".utf8))
+        try reopened.until { reopened.text.contains("BMUX_SSH_REATTACHED") }
+    }
+
     @Test func `local tmux keeps its process directory and TUI across resize and reattach`() throws {
         let fixture = try TmuxFixture()
         defer { fixture.cleanup() }
@@ -484,7 +544,9 @@ private final class TmuxFixture {
     func attach(session: RemoteSession? = nil) throws -> ControlClient {
         let session = session ?? self.session
         let script = session.attachArguments(columns: 80, rows: 24).last!
-            .replacingOccurrences(of: "-L " + session.serverSocketName, with: "-S " + RemoteSession.quote(socket))
+            // Generated /tmp socket paths contain no shell metacharacters;
+            // retain the surrounding sh -c quoting used by SSH sessions.
+            .replacingOccurrences(of: "-L " + session.serverSocketName, with: "-S " + socket)
         let process = Process()
         if let remoteHost {
             process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")

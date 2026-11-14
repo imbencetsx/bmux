@@ -42,11 +42,17 @@ public final class TmuxControl {
                 if byte == 58 || byte == 63 {
                     let tail = diagnostics.split(separator: 10).last ?? []
                     let prompt = String(decoding: tail, as: UTF8.self).lowercased()
-                    if ["password", "passphrase", "yes/no", "verification code", "passcode", "one-time", "otp", "authentication code"].contains(where: prompt.contains) {
+                    let pinPrompt = prompt.split(whereSeparator: { !$0.isLetter }).contains("pin")
+                    if pinPrompt || ["password", "passphrase", "yes/no", "verification code", "passcode", "one-time", "otp", "authentication code"].contains(where: prompt.contains) {
                         awaitsAuthenticationInput = true
                     }
                 }
-                if line.isEmpty, byte != 37 { emit([byte]); continue }
+                if line.isEmpty, byte != 37 {
+                    // SSH runs on a raw PTY, so bare LF diagnostics need
+                    // an explicit carriage return to stay readable.
+                    emit(byte == 10 && diagnostics.dropLast().last != 13 ? [13, 10] : [byte])
+                    continue
+                }
                 line.append(byte)
                 let prefix = Array("%begin ".utf8)
                 if line.count <= prefix.count, !prefix.starts(with: line) {
@@ -54,7 +60,15 @@ public final class TmuxControl {
                 } else if byte == 10 {
                     let value = cleanLine(line)
                     line.removeAll(keepingCapacity: true)
-                    if value.starts(with: prefix) { started = true; awaitsAuthenticationInput = false; consume(value) }
+                    if value.starts(with: prefix) {
+                        started = true
+                        awaitsAuthenticationInput = false
+                        // A rejected password followed by a successful
+                        // attempt must not disable future reconnects.
+                        authenticationFailed = false
+                        diagnostics.removeAll(keepingCapacity: true)
+                        consume(value)
+                    }
                     else { emit(value + [13, 10]) }
                 }
                 continue

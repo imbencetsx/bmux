@@ -6,7 +6,10 @@ import SwiftUI
 struct WorkspaceSidebarList<RowContent: View>: NSViewRepresentable {
     let workspaces: [Workspace]
     @Binding var selection: UUID?
-    let background: Color
+    /// Solid list fill, or `nil` to let the translucent window show through.
+    let background: Color?
+    /// Opaque fill behind drag previews.
+    let cardBackground: Color
     let reduceMotion: Bool
     let onMove: (IndexSet, Int) -> Void
     let rowContent: (Workspace) -> RowContent
@@ -73,13 +76,15 @@ struct WorkspaceSidebarList<RowContent: View>: NSViewRepresentable {
             let ids = Set(items.map(\.id))
             cells = cells.filter { ids.contains($0.key) }
             if let draggedID, !ids.contains(draggedID) { finishDrag() }
-            let fill = NSColor(owner.background).withAlphaComponent(1)
+            let fill = owner.background.map { NSColor($0).withAlphaComponent(1) } ?? .clear
+            let card = NSColor(owner.cardBackground).withAlphaComponent(1)
             table.backgroundColor = fill
+            table.enclosingScrollView?.drawsBackground = owner.background != nil
             table.enclosingScrollView?.backgroundColor = fill
             for item in items {
                 guard let cell = cells[item.id] else { continue }
                 cell.hosting.rootView = owner.rowContent(item)
-                cell.cardBackground = fill
+                cell.cardBackground = card
                 if draggedID != item.id { cell.previewImage = nil }
             }
             if oldIDs != items.map(\.id) || table.numberOfRows != items.count {
@@ -97,7 +102,7 @@ struct WorkspaceSidebarList<RowContent: View>: NSViewRepresentable {
             let item = items[row]
             if let cell = cells[item.id] { return cell }
             let cell = WorkspaceSidebarCell(content: owner.rowContent(item))
-            cell.cardBackground = NSColor(owner.background).withAlphaComponent(1)
+            cell.cardBackground = NSColor(owner.cardBackground).withAlphaComponent(1)
             cells[item.id] = cell
             return cell
         }
