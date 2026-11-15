@@ -158,6 +158,7 @@ import Testing
             workspaces: workspaces,
             selection: Binding(get: { [weak self] in self?.selection }, set: { [weak self] in self?.selection = $0 }),
             background: .black,
+            cardBackground: .black,
             reduceMotion: true,
             onMove: { [weak self] source, destination in
                 self?.workspaces.move(fromOffsets: source, toOffset: destination)

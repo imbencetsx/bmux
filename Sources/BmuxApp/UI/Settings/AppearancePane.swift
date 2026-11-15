@@ -46,7 +46,9 @@ struct AppearancePane: View {
                         .monospacedDigit()
                         .frame(width: 44, alignment: .trailing)
                 }
-                SettingNote(text: "Blur only shows below full opacity.")
+                Toggle("Apply to sidebar and title bar", isOn: $settings.current.transparentChrome)
+                    .disabled(settings.current.backgroundOpacity >= 0.999)
+                SettingNote(text: "Lower the opacity to see the desktop through the terminal; blur softens what shows through. Off keeps the sidebar and title bar solid, like Terminal.app.")
             }
 
             Section("Contrast") {

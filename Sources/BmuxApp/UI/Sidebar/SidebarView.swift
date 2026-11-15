@@ -34,7 +34,10 @@ struct SidebarView: View {
         WorkspaceSidebarList(
             workspaces: manager.workspaces,
             selection: selectedWorkspace,
-            background: BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme),
+            background: BmuxTheme.chromeIsTranslucent(settings: settings.applied)
+                ? nil
+                : BmuxTheme.chromeFill(settings: settings.applied, scheme: scheme),
+            cardBackground: EngineSettings.chromeOpaqueColor(for: settings.applied, scheme: scheme),
             reduceMotion: reduceMotion,
             onMove: { manager.move(from: $0, to: $1) }
         ) { ws in
@@ -64,10 +67,13 @@ struct SidebarView: View {
                 }
             }
         }
-        // Sidebar is one surface with the terminal: opaque theme fill on
-        // all macOS versions (no Liquid Glass passthrough).
+        // Sidebar is one surface with the terminal: solid theme fill on all
+        // macOS versions (no Liquid Glass passthrough), or — when the
+        // transparency setting covers the chrome — clear glass with one
+        // extra layer of the terminal tint, so it reads as a darker column.
         .modifier(SidebarSurfaceModifier(
-            terminalFill: BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme)
+            fill: BmuxTheme.sidebarFill(settings: settings.applied, scheme: scheme),
+            translucent: BmuxTheme.chromeIsTranslucent(settings: settings.applied)
         ))
         // A small breathing space beneath the native titlebar.
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -265,13 +271,21 @@ private struct WorkspaceRow: View {
 
 /// Sidebar paints the opaque theme fill on all macOS versions so it reads
 /// as one surface with the terminal detail — no Liquid Glass passthrough.
+/// Translucent: the fill is clear and the system sidebar material is hidden
+/// so only the window's tint + blur sit behind the list.
 private struct SidebarSurfaceModifier: ViewModifier {
-    var terminalFill: Color
+    var fill: Color
+    var translucent: Bool
 
     func body(content: Content) -> some View {
         content
             .scrollContentBackground(.hidden)
-            .background(terminalFill)
+            .background(fill)
+            .background {
+                SidebarMaterialHider(hidden: translucent)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
     }
 }
 

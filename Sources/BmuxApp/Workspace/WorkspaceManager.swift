@@ -69,6 +69,9 @@ final class WorkspaceManager: ObservableObject {
         advanceSidebarTransition()
     }
 
+    /// True while a sidebar animation step is still pending.
+    var isSidebarTransitioning: Bool { sidebarTransitionTask != nil }
+
     func setSidebarVisible(_ visible: Bool) {
         // Ignore stale native split-view feedback while our transition is
         // in flight. Explicit button/key requests use toggleSidebar instead.

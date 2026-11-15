@@ -27,7 +27,7 @@ struct TerminalPaneView: View {
             // updates; the host owns the live terminal session.
             .id(host.paneID)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme))
+            .background(BmuxTheme.surfaceFill(settings: settings.applied, scheme: scheme))
             .onAppear {
                 requestFocusIfNeeded()
             }

@@ -36,19 +36,25 @@ public struct RemoteSession: Codable, Hashable, Sendable {
     /// No remote PTY: control mode speaks a byte protocol. Local SSH
     /// authentication still uses the helper's controlling terminal.
     public func attachArguments(columns: Int, rows: Int) -> [String] {
-        (isLocal ? ["-c"] : transportArguments) + [bootstrap(columns: columns, rows: rows)]
+        (isLocal ? ["-c"] : transportArguments) + [shellCommand(bootstrap(columns: columns, rows: rows))]
     }
 
     public var cleanupArguments: [String] {
-        (isLocal ? ["-c"] : ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"] + transportArguments) + [
+        (isLocal ? ["-c"] : ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8"] + transportArguments) + [shellCommand(
             "PATH=\"$PATH:/opt/homebrew/bin:/usr/local/bin\"; export PATH; " +
             "tmux -L \(serverSocketName) has-session -t \(Self.quote("=" + name)) 2>/dev/null && " +
             "tmux -L \(serverSocketName) kill-session -t \(Self.quote("=" + name)) || exit 0"
-        ]
+        )]
     }
 
     public static func quote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func shellCommand(_ script: String) -> String {
+        // ssh executes its command using the account's login shell, which
+        // may be fish or csh. Keep our bootstrap's POSIX syntax inside sh.
+        isLocal ? script : "exec /bin/sh -c " + Self.quote(script)
     }
 
     private var transportArguments: [String] {
@@ -71,7 +77,7 @@ public struct RemoteSession: Codable, Hashable, Sendable {
             "command -v tmux >/dev/null 2>&1 || { printf 'bmux: install tmux 3.2 or newer \(location) to keep sessions running.\\n' >&2; exit 78; }; " +
             "case \"$(tmux -V)\" in 'tmux 0.'*|'tmux 1.'*|'tmux 2.'*|'tmux 3.0'*|'tmux 3.1'*) printf 'bmux: upgrade tmux to 3.2 or newer \(location).\\n' >&2; exit 78;; esac; " +
             "\(tmux) start-server \\; set-option -g history-limit 50000 \\; set-option -g default-terminal tmux-256color \\; set-option -g status off \\; set-option -g mouse off \\; set-option -g destroy-unattached off \\; set-option -g window-size latest || exit 78; " +
-            "\(tmux) has-session -t \(target) 2>/dev/null || \(tmux) new-session -d -s \(Self.quote(name)) -x \(max(2, columns)) -y \(max(2, rows))\(directory)\(command) || exit 78; " +
+            "\(tmux) has-session -t \(target) 2>/dev/null || { \(tmux) new-session -d -s \(Self.quote(name)) -x \(max(2, columns)) -y \(max(2, rows))\(directory)\(command) || \(tmux) has-session -t \(target); } || exit 78; " +
             "exec \(tmux) -C attach-session -d -f pause-after=2 -t \(target)"
     }
 }
