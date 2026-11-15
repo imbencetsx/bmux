@@ -44,6 +44,16 @@ import Testing
     @objc func toggle() { count += 1 }
 }
 
+/// Waits for the coalesced sidebar transition chain to finish instead of a
+/// fixed sleep: each step lasts 160ms and loaded CI runners stretch timers.
+@MainActor private func waitForSidebarToSettle(_ manager: WorkspaceManager) async throws {
+    let deadline = ContinuousClock.now + .seconds(10)
+    while manager.isSidebarTransitioning {
+        try #require(ContinuousClock.now < deadline, "sidebar transition never settled")
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
 @MainActor @Test func rapidSidebarTogglesCoalesceAndPreserveTheLastRequest() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("bmux-sidebar-" + UUID().uuidString)
     let store = WorkspaceStore(fileURL: directory.appendingPathComponent("workspaces.json"))
@@ -54,11 +64,11 @@ import Testing
     // Native callbacks arriving from the first animation cannot cancel the
     // user's pending even-numbered request to return to the initial state.
     manager.setSidebarVisible(!initial)
-    try await Task.sleep(for: .milliseconds(500))
+    try await waitForSidebarToSettle(manager)
     #expect(manager.sidebarVisible == initial)
     for _ in 0..<101 { manager.toggleSidebar() }
     manager.setSidebarVisible(initial)
-    try await Task.sleep(for: .milliseconds(500))
+    try await waitForSidebarToSettle(manager)
     #expect(manager.sidebarVisible != initial)
     manager.flush()
     #expect(store.load().sidebarVisible == manager.sidebarVisible)

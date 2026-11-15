@@ -69,10 +69,10 @@ struct SidebarView: View {
         }
         // Sidebar is one surface with the terminal: solid theme fill on all
         // macOS versions (no Liquid Glass passthrough), or — when the
-        // transparency setting covers the chrome — clear, so the window's
-        // single translucent tint shows through.
+        // transparency setting covers the chrome — clear glass with one
+        // extra layer of the terminal tint, so it reads as a darker column.
         .modifier(SidebarSurfaceModifier(
-            fill: BmuxTheme.chromeFill(settings: settings.applied, scheme: scheme),
+            fill: BmuxTheme.sidebarFill(settings: settings.applied, scheme: scheme),
             translucent: BmuxTheme.chromeIsTranslucent(settings: settings.applied)
         ))
         // A small breathing space beneath the native titlebar.

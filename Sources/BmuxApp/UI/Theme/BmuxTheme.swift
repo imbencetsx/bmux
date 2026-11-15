@@ -66,6 +66,16 @@ struct BmuxTheme {
         return EngineSettings.chromeOpaqueColor(for: settings, scheme: scheme)
     }
 
+    /// Sidebar fill. When the chrome is translucent the sidebar is a clear
+    /// glass pane over the window tint; laying the terminal tint over it
+    /// once more keeps it a darker, distinct column instead of a pale one.
+    static func sidebarFill(settings: AppSettings, scheme: ColorScheme) -> Color {
+        if chromeIsTranslucent(settings: settings) {
+            return terminalBackground(settings: settings, scheme: scheme)
+        }
+        return chromeFill(settings: settings, scheme: scheme)
+    }
+
     /// Scheme text and fills over terminal surfaces should resolve under:
     /// the brightness of the terminal background actually shown — NOT the
     /// system scheme. A light catalog theme can be active while the system
