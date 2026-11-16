@@ -64,8 +64,17 @@ struct PaneChromeView: View {
 
             // Unfocused splits dim — focus without boxes over text.
             // Amount is settings-driven (Window → Unfocused split dim).
+            // The dim fades in over the top edge so it eases out from under
+            // the (undimmed) title bar instead of starting on a hard line.
             if !isFocused {
                 BmuxTheme.terminalBackground(settings: settings.applied, scheme: scheme).opacity(unfocusedDim)
+                    .mask {
+                        VStack(spacing: 0) {
+                            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                                .frame(height: 36)
+                            Color.black
+                        }
+                    }
                     .allowsHitTesting(false)
                     .transition(.opacity)
             }
