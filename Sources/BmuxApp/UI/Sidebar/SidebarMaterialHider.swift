@@ -103,9 +103,18 @@ struct SidebarMaterialHider: NSViewRepresentable {
 
             while let parent = child.superview {
                 // 1. NSSplitViewItem wantsFloatingAppearance (macOS 26 floating card)
-                if let item = parent.value(forKey: "splitViewItem") as? NSObject {
-                    if item.responds(to: NSSelectorFromString("setWantsFloatingAppearance:")) {
-                        let origWantsFloating = (item.value(forKey: "wantsFloatingAppearance") as? Bool) ?? true
+                let splitViewItemSel = NSSelectorFromString("splitViewItem")
+                if parent.responds(to: splitViewItemSel),
+                   let item = parent.perform(splitViewItemSel)?.takeUnretainedValue() as? NSObject {
+                    let wantsFloatingSel = NSSelectorFromString("setWantsFloatingAppearance:")
+                    let getWantsFloatingSel = NSSelectorFromString("wantsFloatingAppearance")
+                    if item.responds(to: wantsFloatingSel) {
+                        let origWantsFloating: Bool
+                        if item.responds(to: getWantsFloatingSel) {
+                            origWantsFloating = (item.value(forKey: "wantsFloatingAppearance") as? Bool) ?? true
+                        } else {
+                            origWantsFloating = true
+                        }
                         item.setValue(false, forKey: "wantsFloatingAppearance")
                         parent.needsLayout = true
                         restoreActions.append { [weak item, weak parent] in
@@ -115,33 +124,23 @@ struct SidebarMaterialHider: NSViewRepresentable {
                     }
                 }
 
-                // 2. _NSSplitViewItemViewWrapper ivars / views
-                let parentClassName = NSStringFromClass(type(of: parent))
-                if parentClassName.contains("SplitViewItemViewWrapper") {
-                    if let effectView = parent.value(forKey: "_effectView") as? NSVisualEffectView {
-                        clearVisualEffectView(effectView, cleared: &clearedVevs)
-                    }
-                    if let glassView = parent.value(forKey: "_glassView") as? NSView {
-                        clearGlassView(glassView, cleared: &clearedGlasses)
-                    }
-                    if let alley = parent.value(forKey: "_overlaySidebarExteriorPerimeterView") as? NSView {
-                        alley.isHidden = true
-                        hiddenBackdrops.append(WeakView(view: alley))
-                    }
-                }
-
-                // 3. Parent itself is an NSVisualEffectView
+                // 2. Parent itself is an NSVisualEffectView
                 if let vev = parent as? NSVisualEffectView {
                     clearVisualEffectView(vev, cleared: &clearedVevs)
                 }
 
-                // 4. Parent itself is an NSGlassEffectView
+                // 3. Parent itself is an NSGlassEffectView
                 if let glassClass, parent.isKind(of: glassClass) {
                     clearGlassView(parent, cleared: &clearedGlasses)
                 }
 
-                // 5. Siblings of child
+                // 4. Check all siblings of child
                 for sibling in parent.subviews where sibling !== child {
+                    let sibName = NSStringFromClass(type(of: sibling))
+                    if sibName.contains("Alleyway") || sibName.contains("Perimeter") {
+                        sibling.isHidden = true
+                        hiddenBackdrops.append(WeakView(view: sibling))
+                    }
                     if let glassClass, sibling.isKind(of: glassClass) {
                         clearGlassView(sibling, cleared: &clearedGlasses)
                     }
@@ -179,13 +178,29 @@ struct SidebarMaterialHider: NSViewRepresentable {
         private func clearGlassView(_ view: NSView, cleared: inout Set<ObjectIdentifier>) {
             let id = ObjectIdentifier(view)
             guard cleared.insert(id).inserted else { return }
-            let style = view.value(forKey: "style")
-            let tint = view.value(forKey: "tintColor")
-            view.setValue(0, forKey: "style")
-            view.setValue(nil, forKey: "tintColor")
+
+            let styleSel = NSSelectorFromString("style")
+            let setStyleSel = NSSelectorFromString("setStyle:")
+            let tintSel = NSSelectorFromString("tintColor")
+            let setTintSel = NSSelectorFromString("setTintColor:")
+
+            let style = view.responds(to: styleSel) ? view.value(forKey: "style") : nil
+            let tint = view.responds(to: tintSel) ? view.value(forKey: "tintColor") : nil
+
+            if view.responds(to: setStyleSel) {
+                view.setValue(0, forKey: "style")
+            }
+            if view.responds(to: setTintSel) {
+                view.setValue(nil, forKey: "tintColor")
+            }
             restoreActions.append { [weak view] in
-                view?.setValue(style, forKey: "style")
-                view?.setValue(tint, forKey: "tintColor")
+                guard let view else { return }
+                if view.responds(to: setStyleSel), let style {
+                    view.setValue(style, forKey: "style")
+                }
+                if view.responds(to: setTintSel) {
+                    view.setValue(tint, forKey: "tintColor")
+                }
             }
         }
     }

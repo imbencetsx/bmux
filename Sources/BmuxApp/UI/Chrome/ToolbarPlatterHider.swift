@@ -99,21 +99,7 @@ extension View {
 
 @MainActor
 enum ToolbarPlatterCleaner {
-    private static var swizzled = false
-
-    static func swizzlePlatterLayoutIfNeeded() {
-        guard !swizzled else { return }
-        swizzled = true
-        guard let cls = NSClassFromString("NSToolbarPlatterView") else { return }
-        let origSel = NSSelectorFromString("layout")
-        let swizSel = #selector(NSView.bmux_toolbarPlatterLayout)
-        guard let origMethod = class_getInstanceMethod(cls, origSel),
-              let swizMethod = class_getInstanceMethod(NSView.self, swizSel) else { return }
-        method_exchangeImplementations(origMethod, swizMethod)
-    }
-
     static func hidePlatters(in window: NSWindow) {
-        swizzlePlatterLayoutIfNeeded()
         guard let frameView = window.contentView?.superview else { return }
         hidePlatters(in: frameView)
     }
@@ -126,55 +112,34 @@ enum ToolbarPlatterCleaner {
             for sub in view.subviews {
                 sub.isHidden = true
                 sub.alphaValue = 0
-                if sub.responds(to: NSSelectorFromString("setStyle:")) {
+                let setStyleSel = NSSelectorFromString("setStyle:")
+                if sub.responds(to: setStyleSel) {
                     sub.setValue(0, forKey: "style")
                 }
             }
         }
         if name.contains("ToolbarItemViewer") {
-            if view.responds(to: NSSelectorFromString("setTransparentBackground:")) {
+            let setTransSel = NSSelectorFromString("setTransparentBackground:")
+            if view.responds(to: setTransSel) {
                 view.setValue(true, forKey: "transparentBackground")
             }
-            if let platter = view.value(forKey: "associatedPlatter") as? NSView {
+            let platterSel = NSSelectorFromString("associatedPlatter")
+            if view.responds(to: platterSel),
+               let platter = view.perform(platterSel)?.takeUnretainedValue() as? NSView {
                 platter.isHidden = true
                 platter.alphaValue = 0
                 for sub in platter.subviews {
                     sub.isHidden = true
                     sub.alphaValue = 0
-                }
-            }
-        }
-        if name.contains("ToolbarView") {
-            if let platters = view.value(forKey: "_glassPlatters") as? [NSView] {
-                for platter in platters {
-                    platter.isHidden = true
-                    platter.alphaValue = 0
-                    for sub in platter.subviews {
-                        sub.isHidden = true
-                        sub.alphaValue = 0
+                    let setStyleSel = NSSelectorFromString("setStyle:")
+                    if sub.responds(to: setStyleSel) {
+                        sub.setValue(0, forKey: "style")
                     }
                 }
             }
         }
         for sub in view.subviews {
             hidePlatters(in: sub)
-        }
-    }
-}
-
-extension NSView {
-    @objc func bmux_toolbarPlatterLayout() {
-        self.bmux_toolbarPlatterLayout() // calls original
-        if let window, WindowTransparency.isTranslucent(window: window) {
-            self.isHidden = true
-            self.alphaValue = 0
-            for sub in self.subviews {
-                sub.isHidden = true
-                sub.alphaValue = 0
-                if sub.responds(to: NSSelectorFromString("setStyle:")) {
-                    sub.setValue(0, forKey: "style")
-                }
-            }
         }
     }
 }
