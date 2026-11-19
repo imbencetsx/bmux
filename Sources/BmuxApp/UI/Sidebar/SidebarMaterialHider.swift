@@ -53,17 +53,25 @@ struct SidebarMaterialHider: NSViewRepresentable {
             guard hideMaterial, window != nil else { return }
 
             var child: NSView = self
+            var glassToRestore: [(weakView: WeakView, style: Any?, tint: Any?)] = []
+            let glassClass: AnyClass? = NSClassFromString("NSGlassEffectView")
+
             while let parent = child.superview {
-                if #available(macOS 26, *), let glass = parent as? NSGlassEffectView {
-                    let style = glass.style
-                    let tint = glass.tintColor
-                    glass.style = .clear
-                    glass.tintColor = nil
-                    restoreGlass = { [weak glass] in
-                        glass?.style = style
-                        glass?.tintColor = tint
+                if let glassClass {
+                    if parent.isKind(of: glassClass) {
+                        let style = parent.value(forKey: "style")
+                        let tint = parent.value(forKey: "tintColor")
+                        parent.setValue(0, forKey: "style")
+                        parent.setValue(nil, forKey: "tintColor")
+                        glassToRestore.append((WeakView(view: parent), style, tint))
                     }
-                    return
+                    for sibling in parent.subviews where sibling !== child && sibling.isKind(of: glassClass) {
+                        let style = sibling.value(forKey: "style")
+                        let tint = sibling.value(forKey: "tintColor")
+                        sibling.setValue(0, forKey: "style")
+                        sibling.setValue(nil, forKey: "tintColor")
+                        glassToRestore.append((WeakView(view: sibling), style, tint))
+                    }
                 }
                 for sibling in parent.subviews where sibling !== child && sibling is NSVisualEffectView {
                     sibling.isHidden = true
@@ -71,6 +79,15 @@ struct SidebarMaterialHider: NSViewRepresentable {
                 }
                 if parent is NSSplitView { break }
                 child = parent
+            }
+
+            if !glassToRestore.isEmpty {
+                restoreGlass = {
+                    for item in glassToRestore {
+                        item.weakView.view?.setValue(item.style, forKey: "style")
+                        item.weakView.view?.setValue(item.tint, forKey: "tintColor")
+                    }
+                }
             }
         }
     }

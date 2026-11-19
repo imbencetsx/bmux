@@ -63,7 +63,7 @@ struct WorkspaceSidebarList<RowContent: View>: NSViewRepresentable {
             let scroll = WorkspaceSidebarScrollView()
             scroll.hasVerticalScroller = true
             scroll.autohidesScrollers = true
-            scroll.drawsBackground = true
+            scroll.drawsBackground = owner.background != nil
             scroll.documentView = table
             update(owner: owner)
             return scroll
@@ -76,11 +76,16 @@ struct WorkspaceSidebarList<RowContent: View>: NSViewRepresentable {
             let ids = Set(items.map(\.id))
             cells = cells.filter { ids.contains($0.key) }
             if let draggedID, !ids.contains(draggedID) { finishDrag() }
+            let wantsBg = owner.background != nil
             let fill = owner.background.map { NSColor($0).withAlphaComponent(1) } ?? .clear
             let card = NSColor(owner.cardBackground).withAlphaComponent(1)
             table.backgroundColor = fill
-            table.enclosingScrollView?.drawsBackground = owner.background != nil
-            table.enclosingScrollView?.backgroundColor = fill
+            if let scroll = table.enclosingScrollView {
+                scroll.drawsBackground = wantsBg
+                scroll.backgroundColor = fill
+                scroll.contentView.drawsBackground = wantsBg
+                scroll.contentView.backgroundColor = fill
+            }
             for item in items {
                 guard let cell = cells[item.id] else { continue }
                 cell.hosting.rootView = owner.rowContent(item)

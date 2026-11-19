@@ -55,6 +55,7 @@ struct SidebarView: View {
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             if manager.sidebarVisible {
+                #if false
                 if #available(macOS 26, *) {
                     ToolbarItem(placement: .primaryAction) {
                         SidebarToolbarButton(isVisible: true, toggle: manager.toggleSidebar)
@@ -65,6 +66,11 @@ struct SidebarView: View {
                         SidebarToolbarButton(isVisible: true, toggle: manager.toggleSidebar)
                     }
                 }
+                #else
+                ToolbarItem(placement: .primaryAction) {
+                    SidebarToolbarButton(isVisible: true, toggle: manager.toggleSidebar)
+                }
+                #endif
             }
         }
         // Sidebar is one surface with the terminal: solid theme fill on all

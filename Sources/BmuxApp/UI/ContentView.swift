@@ -82,6 +82,7 @@ struct ContentView: View {
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             if !manager.sidebarVisible {
+                #if false
                 if #available(macOS 26, *) {
                     ToolbarItem(placement: .navigation) {
                         SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
@@ -92,7 +93,13 @@ struct ContentView: View {
                         SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
                     }
                 }
+                #else
+                ToolbarItem(placement: .navigation) {
+                    SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
+                }
+                #endif
             }
+            #if false
             if #available(macOS 26, *) {
                 ToolbarItem(placement: .navigation) {
                     newWorkspaceMenu
@@ -103,9 +110,15 @@ struct ContentView: View {
                     newWorkspaceMenu
                 }
             }
+            #else
+            ToolbarItem(placement: .navigation) {
+                newWorkspaceMenu
+            }
+            #endif
             if let ws = manager.active,
                let detail = manager.detail(for: ws.id),
                let tab = detail.activeTab {
+                #if false
                 if #available(macOS 26, *) {
                     ToolbarItem(placement: .principal) {
                         titlebarStatus(workspace: ws, tab: tab)
@@ -116,6 +129,11 @@ struct ContentView: View {
                         titlebarStatus(workspace: ws, tab: tab)
                     }
                 }
+                #else
+                ToolbarItem(placement: .principal) {
+                    titlebarStatus(workspace: ws, tab: tab)
+                }
+                #endif
             }
         }
         .toolbarBackground(
