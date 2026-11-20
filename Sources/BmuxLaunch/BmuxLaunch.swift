@@ -71,7 +71,8 @@ enum BmuxLaunch {
 
     /// Dump restore bytes to stdout, or clear the screen — same contract as
     /// the historical shell helper. Bytes written here are terminal *output*
-    /// (Ghostty renders them); nothing is fed to the child's stdin.
+    /// (Ghostty renders them); reply-generating queries are filtered out so
+    /// nothing comes back on the child's stdin.
     private static func restoreOrClear(
         transcriptPath: String,
         restore: Bool,
@@ -88,7 +89,10 @@ enum BmuxLaunch {
                     let start = size > UInt64(restoreBytes) ? size - UInt64(restoreBytes) : 0
                     _ = try? handle.seek(toOffset: start)
                     if let data = try? handle.readToEnd(), !data.isEmpty {
-                        FileHandle.standardOutput.write(data)
+                        // Strip recorded terminal queries: Ghostty would answer
+                        // them into the new shell's input as typed garbage.
+                        let replay = TranscriptReplayFilter.replayBytes(Array(data))
+                        FileHandle.standardOutput.write(Data(replay))
                         restored = true
                     }
                 }
