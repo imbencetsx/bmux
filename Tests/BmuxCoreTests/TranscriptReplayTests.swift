@@ -46,3 +46,17 @@ private func replay(_ text: String) -> String {
     #expect(text.components(separatedBy: "\u{1B}[?1049l").count == 2)
     #expect(text.contains("\u{1B}[<99u"))
 }
+
+@Test func `transcript replay never enables modes that make the terminal send input`() {
+    // Focus reporting enabled mid-replay sent `^[[I` to the new shell when
+    // the window gained focus at launch.
+    #expect(replay("a\u{1B}[?1004hb") == "ab")
+    #expect(replay("\u{1B}[?1000h\u{1B}[?1002h\u{1B}[?1003h\u{1B}[?1006h\u{1B}[?2004h\u{1B}[?2031h") == "")
+    // Mixed lists keep the rendering modes.
+    #expect(replay("\u{1B}[?1049;1006h") == "\u{1B}[?1049h")
+    #expect(replay("\u{1B}[?25;1004h") == "\u{1B}[?25h")
+    // Kitty keyboard / modifyOtherKeys belonged to the program that is gone.
+    #expect(replay("\u{1B}[>1u\u{1B}[=5;1u\u{1B}[>4;2mx") == "x")
+    // Disabling still passes through.
+    #expect(replay("\u{1B}[?1004l\u{1B}[<u") == "\u{1B}[?1004l\u{1B}[<u")
+}

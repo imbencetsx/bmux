@@ -25,9 +25,10 @@ public enum TranscriptReplayFilter {
         var reset = ""
         if altScreenActive { reset += "\u{1B}[?1049l" }
         reset += "\u{1B}[?2026l"                               // end synchronized update
-        reset += "\u{1B}[?1000l\u{1B}[?1002l\u{1B}[?1003l"     // mouse tracking
-        reset += "\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1015l\u{1B}[?1016l"
+        reset += "\u{1B}[?9l\u{1B}[?1000l\u{1B}[?1001l\u{1B}[?1002l\u{1B}[?1003l" // mouse tracking
+        reset += "\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1007l\u{1B}[?1015l\u{1B}[?1016l"
         reset += "\u{1B}[?1004l\u{1B}[?2004l"                  // focus events, bracketed paste
+        reset += "\u{1B}[?2031l\u{1B}[?2048l"                  // colour-scheme / resize reports
         reset += "\u{1B}[<99u\u{1B}[>4;0m"                     // kitty keyboard stack, modifyOtherKeys
         reset += "\u{1B}[?1l\u{1B}>"                           // cursor keys, keypad
         reset += "\u{1B}[0m\u{1B}[?25h\u{1B}[?7h"              // SGR, cursor visible, autowrap
@@ -82,7 +83,11 @@ public enum TranscriptReplayFilter {
                 case 0x18, 0x1A: reset()                               // CAN / SUB abort
                 case 0x40...0x7E:
                     sequence.append(byte)
-                    if isReplyingCSI(sequence) { reset() } else {
+                    if isReplyingCSI(sequence) || isInputModeChange(sequence) {
+                        reset()
+                    } else {
+                        sequence = withoutReportingModes(sequence)
+                        if sequence.isEmpty { reset(); return }
                         trackAltScreen(sequence)
                         flush(into: &output)
                     }
@@ -154,6 +159,42 @@ public enum TranscriptReplayFilter {
                 return prefix == nil && [11, 13, 14, 15, 16, 18, 19, 20, 21].contains(first)
             default: return false
             }
+        }
+
+        /// DEC private modes that make the terminal *send* input on its own
+        /// (mouse, focus in/out, colour-scheme and in-band resize reports,
+        /// alternate-scroll arrows, bracketed paste markers). Enabling one
+        /// mid-replay lets an event — e.g. the window gaining focus at
+        /// launch — reach the new shell as `^[[I` before a later reset runs,
+        /// so their *set* side is never replayed. Resets pass through.
+        static let reportingModes: Set<Substring> = [
+            "9", "1000", "1001", "1002", "1003", "1004", "1005", "1006",
+            "1007", "1015", "1016", "2004", "2031", "2048",
+        ]
+
+        /// `CSI ? … h` with the reporting modes removed; empty when nothing
+        /// else was being set.
+        private func withoutReportingModes(_ bytes: [UInt8]) -> [UInt8] {
+            guard bytes.count > 3, bytes[2] == UInt8(ascii: "?"), bytes.last == UInt8(ascii: "h") else {
+                return bytes
+            }
+            let modes = String(decoding: bytes.dropFirst(3).dropLast(), as: UTF8.self)
+                .split(separator: ";", omittingEmptySubsequences: false)
+            let kept = modes.filter { !Self.reportingModes.contains($0) }
+            if kept.count == modes.count { return bytes }
+            if kept.isEmpty { return [] }
+            return Array("\u{1B}[?\(kept.joined(separator: ";"))h".utf8)
+        }
+
+        /// Kitty keyboard push/set (`CSI > n u`, `CSI = n ; m u`) and
+        /// modifyOtherKeys (`CSI > 4 ; n m`) only change how keys are
+        /// encoded for the program that asked; that program is gone.
+        private func isInputModeChange(_ bytes: [UInt8]) -> Bool {
+            guard bytes.count > 2, let final = bytes.last else { return false }
+            let prefix = bytes[2]
+            if final == UInt8(ascii: "u") { return prefix == UInt8(ascii: ">") || prefix == UInt8(ascii: "=") }
+            if final == UInt8(ascii: "m") { return prefix == UInt8(ascii: ">") }
+            return false
         }
 
         private func isReplyingString(kind: UInt8, payload: [UInt8]) -> Bool {
