@@ -6,9 +6,11 @@ import SwiftUI
 /// and restores it otherwise.
 ///
 /// - macOS 26+:
-///   1. `NavigationSplitView` sets `wantsFloatingAppearance = true` on the sidebar
-///      `NSSplitViewItem`, creating an inset floating card. We clear this flag so
-///      the sidebar extends edge-to-edge full height.
+///   1. The sidebar `NSSplitViewItem` renders as an inset floating glass card
+///      (`NSContainerConcentricGlassEffectView`, 8pt inset, rounded). AppKit only
+///      honors `wantsFloatingAppearance` when the app config
+///      `NSSplitViewItemSidebarDefaultsToFloatingAppearance` is NO (BMuxApp
+///      registers that); we then clear the flag so the sidebar is edge-to-edge.
 ///   2. The sidebar column content is hosted inside an `NSVisualEffectView` parent
 ///      (inside `_NSSplitViewItemViewWrapper`), which renders the solid/chameleon
 ///      sidebar material. We call `_setClear: true` via runtime messaging and set
@@ -32,6 +34,9 @@ struct SidebarMaterialHider: NSViewRepresentable {
         private var restoreActions: [() -> Void] = []
         private var pending = false
         private var resizeObserver: AnyObject?
+        private weak var floatingItem: NSObject?
+        private weak var floatingWrapper: NSView?
+        private var originalFloating: Bool?
 
         private typealias SetClearFunc = @convention(c) (AnyObject, Selector, Bool) -> Void
         private static let setClearSelector = NSSelectorFromString("_setClear:")
@@ -94,7 +99,10 @@ struct SidebarMaterialHider: NSViewRepresentable {
             for restore in restoreActions { restore() }
             restoreActions.removeAll()
 
-            guard hideMaterial, window != nil else { return }
+            guard hideMaterial, window != nil else {
+                restoreFloating()
+                return
+            }
 
             var child: NSView = self
             let glassClass: AnyClass? = NSClassFromString("NSGlassEffectView")
@@ -102,26 +110,13 @@ struct SidebarMaterialHider: NSViewRepresentable {
             var clearedGlasses: Set<ObjectIdentifier> = []
 
             while let parent = child.superview {
-                // 1. NSSplitViewItem wantsFloatingAppearance (macOS 26 floating card)
+                // 1. NSSplitViewItem wantsFloatingAppearance (macOS 26 floating card).
+                // Only effective because BMuxApp disables
+                // NSSplitViewItemSidebarDefaultsToFloatingAppearance.
                 let splitViewItemSel = NSSelectorFromString("splitViewItem")
                 if parent.responds(to: splitViewItemSel),
                    let item = parent.perform(splitViewItemSel)?.takeUnretainedValue() as? NSObject {
-                    let wantsFloatingSel = NSSelectorFromString("setWantsFloatingAppearance:")
-                    let getWantsFloatingSel = NSSelectorFromString("wantsFloatingAppearance")
-                    if item.responds(to: wantsFloatingSel) {
-                        let origWantsFloating: Bool
-                        if item.responds(to: getWantsFloatingSel) {
-                            origWantsFloating = (item.value(forKey: "wantsFloatingAppearance") as? Bool) ?? true
-                        } else {
-                            origWantsFloating = true
-                        }
-                        item.setValue(false, forKey: "wantsFloatingAppearance")
-                        parent.needsLayout = true
-                        restoreActions.append { [weak item, weak parent] in
-                            item?.setValue(origWantsFloating, forKey: "wantsFloatingAppearance")
-                            parent?.needsLayout = true
-                        }
-                    }
+                    setFloating(false, item: item, wrapper: parent)
                 }
 
                 // 2. Parent itself is an NSVisualEffectView
@@ -156,6 +151,35 @@ struct SidebarMaterialHider: NSViewRepresentable {
                 if parent is NSSplitView { break }
                 child = parent
             }
+        }
+
+        /// Flips `wantsFloatingAppearance` only when it differs, so resizes
+        /// don't toggle the sidebar between inset and flush layouts.
+        private func setFloating(_ floating: Bool, item: NSObject, wrapper: NSView) {
+            let getter = NSSelectorFromString("wantsFloatingAppearance")
+            let setter = NSSelectorFromString("setWantsFloatingAppearance:")
+            guard item.responds(to: getter), item.responds(to: setter) else { return }
+            let current = (item.value(forKey: "wantsFloatingAppearance") as? Bool) ?? true
+            if floatingItem !== item {
+                restoreFloating()
+                floatingItem = item
+                floatingWrapper = wrapper
+                originalFloating = current
+            }
+            guard current != floating else { return }
+            item.setValue(floating, forKey: "wantsFloatingAppearance")
+            wrapper.needsLayout = true
+        }
+
+        private func restoreFloating() {
+            guard let item = floatingItem, let original = originalFloating else { return }
+            if (item.value(forKey: "wantsFloatingAppearance") as? Bool) != original {
+                item.setValue(original, forKey: "wantsFloatingAppearance")
+                floatingWrapper?.needsLayout = true
+            }
+            floatingItem = nil
+            floatingWrapper = nil
+            originalFloating = nil
         }
 
         private func clearVisualEffectView(_ vev: NSVisualEffectView, cleared: inout Set<ObjectIdentifier>) {
