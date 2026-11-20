@@ -12,6 +12,15 @@ struct BMuxApp: App {
     @StateObject private var hosts: PaneHostStore
 
     init() {
+        // macOS 26+: AppKit forces every sidebar into the inset floating
+        // glass card while this app config is YES (its default), ignoring
+        // `NSSplitViewItem.wantsFloatingAppearance`. Turning it off hands
+        // the decision back to the per-item flag, which
+        // `SidebarMaterialHider` clears for translucent chrome. Must be
+        // registered before the first split view item is created.
+        UserDefaults.standard.register(defaults: [
+            "NSSplitViewItemSidebarDefaultsToFloatingAppearance": false
+        ])
         // Settings own the engine look: the host store is born from the
         // loaded settings, and every debounced commit reconfigures it
         // live (no respawn).

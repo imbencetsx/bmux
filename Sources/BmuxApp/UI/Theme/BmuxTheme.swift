@@ -66,12 +66,12 @@ struct BmuxTheme {
         return EngineSettings.chromeOpaqueColor(for: settings, scheme: scheme)
     }
 
-    /// Sidebar fill. When the chrome is translucent the sidebar is a clear
-    /// glass pane over the window tint; laying the terminal tint over it
-    /// once more keeps it a darker, distinct column instead of a pale one.
+    /// Sidebar fill. When the chrome is translucent the sidebar is clear
+    /// to let the window tint and backdrop show through uniformly without
+    /// stacking an extra opaque box.
     static func sidebarFill(settings: AppSettings, scheme: ColorScheme) -> Color {
         if chromeIsTranslucent(settings: settings) {
-            return terminalBackground(settings: settings, scheme: scheme)
+            return .clear
         }
         return chromeFill(settings: settings, scheme: scheme)
     }

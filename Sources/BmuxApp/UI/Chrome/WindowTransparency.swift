@@ -14,27 +14,78 @@ import SwiftUI
 struct WindowTransparency: NSViewRepresentable {
     let translucent: Bool
     let blurRadius: Int
+    var hideChromePlatters: Bool = false
+
+    private static var translucentWindows: Set<ObjectIdentifier> = []
+
+    static func isTranslucent(window: NSWindow) -> Bool {
+        translucentWindows.contains(ObjectIdentifier(window))
+    }
 
     func makeNSView(context: Context) -> BridgeView { BridgeView() }
 
     func updateNSView(_ view: BridgeView, context: Context) {
         view.translucent = translucent
         view.blurRadius = blurRadius
+        view.hideChromePlatters = hideChromePlatters
         view.apply()
     }
 
     final class BridgeView: NSView {
         var translucent = false
         var blurRadius = 0
-        private var appliedState: (Bool, Int)?
+        var hideChromePlatters = false
+        private var appliedState: (Bool, Int, Bool)?
         private weak var appliedWindow: NSWindow?
+        private var observers: [AnyObject] = []
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             appliedState = nil
+            setupObservers()
             apply()
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            super.viewWillMove(toWindow: newWindow)
+            if newWindow == nil {
+                clearObservers()
+                if let window {
+                    WindowTransparency.translucentWindows.remove(ObjectIdentifier(window))
+                }
+            }
+        }
+
+        private func setupObservers() {
+            clearObservers()
+            guard let window else { return }
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.didUpdateNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.applyPlatterPolicy()
+                }
+            })
+            observers.append(NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.applyPlatterPolicy()
+                }
+            })
+        }
+
+        private func clearObservers() {
+            for obs in observers {
+                NotificationCenter.default.removeObserver(obs)
+            }
+            observers.removeAll()
         }
 
         func apply() {
@@ -44,22 +95,31 @@ struct WindowTransparency: NSViewRepresentable {
                 DispatchQueue.main.async { [weak self] in self?.apply() }
                 return
             }
-            let state = (translucent, translucent ? max(0, blurRadius) : 0)
+            let state = (translucent, translucent ? max(0, blurRadius) : 0, hideChromePlatters)
             if appliedWindow === window, let appliedState, appliedState == state { return }
             appliedWindow = window
             appliedState = state
 
             if translucent {
+                WindowTransparency.translucentWindows.insert(ObjectIdentifier(window))
                 window.isOpaque = false
                 // Near-clear (not fully clear) keeps the window shadow and
                 // hit testing in areas no SwiftUI view paints.
                 window.backgroundColor = NSColor.white.withAlphaComponent(0.001)
             } else {
+                WindowTransparency.translucentWindows.remove(ObjectIdentifier(window))
                 window.isOpaque = true
                 window.backgroundColor = .windowBackgroundColor
             }
             WindowBlur.set(radius: state.1, on: window)
             window.invalidateShadow()
+
+            applyPlatterPolicy()
+        }
+
+        func applyPlatterPolicy() {
+            guard let window, hideChromePlatters else { return }
+            ToolbarPlatterCleaner.hidePlatters(in: window)
         }
     }
 }

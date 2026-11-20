@@ -15,6 +15,7 @@ struct BmuxGlassTextModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         Group {
+            #if false
             if #available(macOS 26, *) {
                 if prominent {
                     content.buttonStyle(.glassProminent)
@@ -26,6 +27,13 @@ struct BmuxGlassTextModifier: ViewModifier {
             } else {
                 content.buttonStyle(.bmuxSecondary)
             }
+            #else
+            if prominent {
+                content.buttonStyle(.bmuxPrimary)
+            } else {
+                content.buttonStyle(.bmuxSecondary)
+            }
+            #endif
         }
     }
 }
@@ -35,6 +43,7 @@ struct BmuxGlassTextModifier: ViewModifier {
 struct BmuxGlassIconModifier: ViewModifier {
     func body(content: Content) -> some View {
         Group {
+            #if false
             if #available(macOS 26, *) {
                 content
                     .buttonStyle(.glass)
@@ -42,6 +51,9 @@ struct BmuxGlassIconModifier: ViewModifier {
             } else {
                 content.buttonStyle(.bmuxGhost)
             }
+            #else
+            content.buttonStyle(.bmuxGhost)
+            #endif
         }
     }
 }
@@ -68,11 +80,15 @@ struct BmuxGlassGroup<Content: View>: View {
 
     var body: some View {
         Group {
+            #if false
             if #available(macOS 26, *) {
                 GlassEffectContainer(spacing: spacing) { content }
             } else {
                 content
             }
+            #else
+            content
+            #endif
         }
     }
 }
@@ -85,6 +101,7 @@ struct BmuxButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         Group {
+            #if false
             if kind == .ghost {
                 GhostLabel(configuration: configuration, scheme: scheme, controlSize: controlSize)
             } else if #available(macOS 26, *) {
@@ -98,6 +115,16 @@ struct BmuxButtonStyle: ButtonStyle {
                     font: labelFont, height: controlHeight
                 )
             }
+            #else
+            if kind == .ghost {
+                GhostLabel(configuration: configuration, scheme: scheme, controlSize: controlSize)
+            } else {
+                LegacyPillLabel(
+                    configuration: configuration, kind: kind, scheme: scheme,
+                    font: labelFont, height: controlHeight
+                )
+            }
+            #endif
         }
         .opacity(isEnabled ? 1 : 0.45)
         .scaleEffect(configuration.isPressed ? 0.97 : hovering && isEnabled ? 1.02 : 1)
@@ -157,6 +184,7 @@ private struct GhostLabel: View {
 
     var body: some View {
         Group {
+            #if false
             if #available(macOS 26, *) {
                 configuration.label
                     .font(.system(size: 13))
@@ -173,6 +201,14 @@ private struct GhostLabel: View {
                     .contentShape(Circle())
                     .background(hoverFill, in: Circle())
             }
+            #else
+            configuration.label
+                .font(.system(size: 13))
+                .foregroundStyle(BmuxTheme.muted(scheme))
+                .frame(width: box, height: box)
+                .contentShape(Circle())
+                .background(hoverFill, in: Circle())
+            #endif
         }
     }
 
@@ -190,6 +226,7 @@ private struct GhostLabel: View {
     }
 }
 
+#if false
 /// Liquid Glass pill (macOS 26+). Tint carries the hierarchy: ink for
 /// primary, neutral for secondary, Srcery orange for brand.
 @available(macOS 26, *)
@@ -235,6 +272,7 @@ private struct GlassPillLabel: View {
         }
     }
 }
+#endif
 
 /// Pre-macOS 26 fallback: solid pills, same metrics as glass.
 private struct LegacyPillLabel: View {

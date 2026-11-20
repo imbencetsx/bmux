@@ -142,6 +142,7 @@ struct TerminalTabStrip: View {
         }
         .background {
             if selected {
+                #if false
                 if #available(macOS 26, *) {
                     // Live glass knob, gliding on the same geometry
                     // effect as the fallback — the whole pill moves,
@@ -159,6 +160,15 @@ struct TerminalTabStrip: View {
                             radius: 1, y: 1
                         )
                 }
+                #else
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(selectionFill)
+                    .matchedGeometryEffect(id: "segment", in: selection)
+                    .shadow(
+                        color: contrast == .dark ? .clear : .black.opacity(0.15),
+                        radius: 1, y: 1
+                    )
+                #endif
             }
         }
         .onHover { hovering in

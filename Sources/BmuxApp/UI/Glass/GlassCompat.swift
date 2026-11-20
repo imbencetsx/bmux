@@ -12,30 +12,42 @@ extension View {
     /// Circular glass for icon buttons (e.g. the sidebar toggle).
     @ViewBuilder
     func bmuxGlassButton() -> some View {
+        #if false
         if #available(macOS 26, *) {
             self.glassEffect(.regular.interactive(), in: Circle())
         } else {
             self.background(.ultraThinMaterial, in: Circle())
         }
+        #else
+        self.background(.ultraThinMaterial, in: Circle())
+        #endif
     }
 
     /// Rectangular glass panel (e.g. floating cards over the terminal).
     @ViewBuilder
     func bmuxGlassPanel(cornerRadius: CGFloat = 16) -> some View {
+        #if false
         if #available(macOS 26, *) {
             self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
         } else {
             self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
         }
+        #else
+        self.background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
+        #endif
     }
 
     /// Small glass chip for hover-revealed pane controls.
     @ViewBuilder
     func bmuxGlassChip() -> some View {
+        #if false
         if #available(macOS 26, *) {
             self.glassEffect(.regular.interactive(), in: Capsule())
         } else {
             self.background(.ultraThinMaterial, in: Capsule())
         }
+        #else
+        self.background(.ultraThinMaterial, in: Capsule())
+        #endif
     }
 }

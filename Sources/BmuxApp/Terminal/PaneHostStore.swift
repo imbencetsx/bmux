@@ -33,9 +33,9 @@ final class PaneHost: ObservableObject {
     let bornAt = Date()
 
     private var cwdSink: AnyCancellable?
-    private var metadataTimer: Timer?
+    private nonisolated(unsafe) var metadataTimer: Timer?
 
-    isolated deinit { metadataTimer?.invalidate() }
+    deinit { metadataTimer?.invalidate() }
 
     init(
         launch: Launch,

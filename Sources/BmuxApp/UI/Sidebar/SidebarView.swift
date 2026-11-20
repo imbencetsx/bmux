@@ -55,15 +55,9 @@ struct SidebarView: View {
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             if manager.sidebarVisible {
-                if #available(macOS 26, *) {
-                    ToolbarItem(placement: .primaryAction) {
-                        SidebarToolbarButton(isVisible: true, toggle: manager.toggleSidebar)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .primaryAction) {
-                        SidebarToolbarButton(isVisible: true, toggle: manager.toggleSidebar)
-                    }
+                ToolbarItem(placement: .primaryAction) {
+                    SidebarToolbarButton(isVisible: true, toggle: manager.toggleSidebar)
+                        .hideToolbarPlatter(BmuxTheme.chromeIsTranslucent(settings: settings.applied))
                 }
             }
         }

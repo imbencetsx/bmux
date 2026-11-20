@@ -82,39 +82,21 @@ struct ContentView: View {
         .toolbar(removing: .sidebarToggle)
         .toolbar {
             if !manager.sidebarVisible {
-                if #available(macOS 26, *) {
-                    ToolbarItem(placement: .navigation) {
-                        SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .navigation) {
-                        SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
-                    }
+                ToolbarItem(placement: .navigation) {
+                    SidebarToolbarButton(isVisible: false, toggle: manager.toggleSidebar)
+                        .hideToolbarPlatter(BmuxTheme.chromeIsTranslucent(settings: settings.applied))
                 }
             }
-            if #available(macOS 26, *) {
-                ToolbarItem(placement: .navigation) {
-                    newWorkspaceMenu
-                }
-                .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .navigation) {
-                    newWorkspaceMenu
-                }
+            ToolbarItem(placement: .navigation) {
+                newWorkspaceMenu
+                    .hideToolbarPlatter(BmuxTheme.chromeIsTranslucent(settings: settings.applied))
             }
             if let ws = manager.active,
                let detail = manager.detail(for: ws.id),
                let tab = detail.activeTab {
-                if #available(macOS 26, *) {
-                    ToolbarItem(placement: .principal) {
-                        titlebarStatus(workspace: ws, tab: tab)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .principal) {
-                        titlebarStatus(workspace: ws, tab: tab)
-                    }
+                ToolbarItem(placement: .principal) {
+                    titlebarStatus(workspace: ws, tab: tab)
+                        .hideToolbarPlatter(BmuxTheme.chromeIsTranslucent(settings: settings.applied))
                 }
             }
         }
@@ -130,7 +112,8 @@ struct ContentView: View {
         .background {
             WindowTransparency(
                 translucent: EngineSettings.isTranslucent(settings.applied),
-                blurRadius: settings.applied.backgroundBlur
+                blurRadius: settings.applied.backgroundBlur,
+                hideChromePlatters: BmuxTheme.chromeIsTranslucent(settings: settings.applied)
             )
             .allowsHitTesting(false)
             .accessibilityHidden(true)
