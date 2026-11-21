@@ -49,7 +49,9 @@ final class PaneHost: ObservableObject {
         self.paneID = launch.paneID
         self.generation = generation
         self.controller = controller
-        self.terminalView = BmuxTerminalView(frame: .zero)
+        let terminalView = BmuxTerminalView(frame: .zero)
+        terminalView.paneID = launch.paneID
+        self.terminalView = terminalView
         let state = TerminalViewState(controller: controller)
         // A nil command falls back to ghostty's default shell lookup.
         // Resize coalescing comes from settings so alt-screen

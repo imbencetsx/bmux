@@ -126,6 +126,10 @@ struct ContentView: View {
             guard let raw = note.object as? String, let intent = BMuxIntent(rawValue: raw) else { return }
             ops.run(intent)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .bmuxPaneIntent)) { note in
+            guard let request = note.object as? PaneIntentRequest else { return }
+            ops.run(request.intent, onPane: request.paneID)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .bmuxTerminalNumber)) { note in
             if let number = note.object as? Int { ops.selectTerminal(number) }
         }
