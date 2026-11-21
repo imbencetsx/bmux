@@ -29,6 +29,17 @@ struct TerminalOps {
         }
     }
 
+    /// Context-menu actions name their pane: focus it (in the active
+    /// workspace) first, then run the intent against it.
+    func run(_ intent: BMuxIntent, onPane paneID: UUID) {
+        guard let ws = manager.active,
+              let detail = manager.detail(for: ws.id),
+              let tab = detail.tabs.first(where: { $0.root.pane(paneID) != nil }) else { return }
+        if detail.activeTab?.id != tab.id { manager.selectTab(tab.id, in: ws.id) }
+        focusPane(paneID, in: ws.id, tabID: tab.id)
+        run(intent)
+    }
+
     func splitPane(_ paneID: UUID, direction: SplitDirection, in ws: Workspace, tabID: UUID) {
         manager.mutateDetail(ws.id) { detail in
             guard let i = detail.tabs.firstIndex(where: { $0.id == tabID }) else { return }
